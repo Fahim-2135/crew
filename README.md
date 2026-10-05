@@ -56,6 +56,17 @@ Attach screenshots, photos, PDFs or documents with the 📎 button, by dragging 
 chat, or by pasting. Above, Writer reads a photo of a handwritten order sheet and works out
 what to bake first.
 
+## Connect it across your apps and let it do the work for you
+
+<img src="assets/readme/apps-workflow.png" alt="An example conversation: Social studies competitors on LinkedIn, comments on three of their posts, writes and posts a post with a carousel, then agrees to repeat it every day at 7 pm" width="900">
+
+<sub>An example conversation, staged for this page.</sub>
+
+Give one agent a whole job that spans apps: study what others post, comment, write in your
+style, build the carousel, publish. It does every step itself and reports back with links.
+Ask for it **every day at 7 pm** and it becomes a routine. Anything that goes public still
+waits for your OK.
+
 ## They use the web and your apps
 
 <img src="assets/readme/research.png" alt="Research answers a pricing question with clickable sources and says what it couldn't verify" width="900">
