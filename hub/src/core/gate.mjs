@@ -64,7 +64,20 @@ const WRITE_SQL =
  */
 const BROWSER = /__browser_([a-z][a-z_]*)$/;
 const OUTWARD =
-  /\b(post|publish|send|submit|share|repost|comment|reply|like|react|follow|connect|invite|buy|pay|purchase|order|checkout|check out|subscribe|donate|delete|remove|discard|trash|confirm|approve|accept|agree|sign ?up|register|create account|log ?out|sign ?out|withdraw|transfer|roll ?out|release|promote|go live|deploy|place)\b/i;
+  /\b(post|publish|send|submit|share|repost|comment|reply|invite|buy|pay|purchase|order|checkout|check out|subscribe|donate|delete|remove|discard|trash|confirm|approve|accept|agree|sign ?up|register|create account|log ?out|sign ?out|withdraw|transfer|roll ?out|release|promote|go live|deploy|place)\b/i;
+/**
+ * Following and connecting (and the invitation's send button): they ask, and the user can say
+ * yes to all of them for the rest of the task (a "grant"). Likes and reactions go freely.
+ */
+const FOLLOWS =
+  /\b(follow|following|unfollow|connect|connected)\b|\bsend\s+(without\s+a\s+note|(the\s+)?invitation|(the\s+)?invite)\b/i;
+/** Where a button sits, after the button itself: "… on Wesley's post", "… for your post". */
+const CONTEXT =
+  /\s+(?:on|under|below|above|beside|next to|for|of|in|inside|from|by|about|at|near|within)\s+/i;
+/** Clicks that only look: "Open post analytics", "View all posts", "Show more". */
+const LOOKS = /^(open|view|show|see|expand|read|go to|visit|load|more|next|previous|back|close)\b/i;
+/** What a grant covers, as the user reads it on the "yes to all" button. */
+export const GRANTS = Object.freeze({ follow: "follows and connection requests" });
 /**
  * Buttons that only open a box to write in: "Start a post", "New message", "Open the comment
  * box", "Add a comment" (the agent describes what it clicks; crewNote asks it to say so).
@@ -123,7 +136,13 @@ function browserGate(action, input) {
     return ask("a browser action Crew can't read", `Browser ${action.replace(/_/g, " ")}`);
   }
   if (["click", "check", "uncheck", "hover", "drag", "drop"].includes(action)) {
-    if (action !== "hover" && OUTWARD.test(what) && !OPENS_EDITOR.test(what))
+    // The button itself, not where it sits: "Like button on Wesley's post" is a like.
+    const button = what.split(CONTEXT)[0].replace(/^\s*(click|press|tap)?\s*(the|a)?\s+/i, "");
+    if (action === "hover" || LOOKS.test(button)) return null;
+    if (FOLLOWS.test(button)) {
+      return { ...ask("follows or connects with someone", `Click "${what}"`), grant: "follow" };
+    }
+    if (OUTWARD.test(button) && !OPENS_EDITOR.test(button))
       return ask("clicks a button that acts", `Click "${what}"`);
     return null;
   }

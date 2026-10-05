@@ -83,6 +83,10 @@ test("the agent browser: looking and typing go ahead; the click that acts asks",
     ["take_screenshot", {}],
     ["click", { element: "Start a post", ref: "e12" }],
     ["click", { element: "Analytics tab", ref: "e40" }],
+    ["click", { element: "Analytics for your post about claude-face", ref: "e41" }],
+    ["click", { element: "Show more of this post", ref: "e42" }],
+    ["click", { element: "View post analytics", ref: "e43" }],
+    ["click", { element: "the Like button under Maya's post", ref: "e44" }],
     ["click", { element: "Open the comment box on Wesley's post", ref: "e30" }],
     ["click", { element: "Add a comment field", ref: "e33" }],
     ["click", { element: "Show all posts", ref: "e41" }],
@@ -242,6 +246,83 @@ test("a quick OK: the run's request waits; the user's yes or no settles it with 
     assert.equal(yes.status, "approved");
     assert.equal(store.queuedJobs().length, before, "no follow-up run: the agent carries on");
     assert.equal(store.get("notices", {}).social, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("likes go freely; follows and connects ask, with a yes to all of them for the task", async () => {
+  const b = (action, input = {}) => gateFor({ tool: `mcp__browser__browser_${action}`, input });
+  assert.equal(b("click", { element: "Like button on Wesley's post" }).ask, false);
+  assert.equal(b("click", { element: "React: Celebrate" }).ask, false);
+  for (const element of ["Follow", "Connect button", "Send without a note", "Following"]) {
+    const v = b("click", { element });
+    assert.equal(v.ask, true, element);
+    assert.equal(v.grant, "follow", element);
+  }
+  assert.equal(b("click", { element: "Post button" }).grant, undefined, "posts never get a grant");
+
+  const { Store } = await import("../src/io/store.mjs");
+  const { Hub } = await import("../src/hub.mjs");
+  const { tmpdir } = await import("node:os");
+  const store = new Store(":memory:");
+  const hub = new Hub({
+    config: testConfig(),
+    store,
+    paths: { brain: tmpdir(), agentsDir: tmpdir(), runs: tmpdir() },
+    bin: "none",
+    runTurn: () => {
+      throw new Error("no runs");
+    },
+    sessions: () => [],
+  });
+  hub.stop();
+  const running = (tainted = false) => {
+    const job = store.addJob({
+      agent: "social",
+      kind: "chat",
+      priority: 0,
+      prompt: "x",
+      createdAt: 1,
+      tainted,
+    });
+    store.updateJob(job.id, { status: "running" });
+    return job;
+  };
+  const follow = (job, grant = "follow") =>
+    hub.gateRequest({
+      jobId: job.id,
+      tool: "mcp__browser__browser_click",
+      summary: 'Click "Follow"',
+      reason: "follows",
+      grant,
+    });
+  try {
+    const job = running();
+    // "Just this one": the next follow asks again.
+    const first = follow(job);
+    assert.equal(first.status, "pending");
+    assert.equal(first.payload.grant, "follow");
+    await hub.decideApproval(first.code, { decision: "approve", nonce: "a" });
+    assert.equal(follow(job).status, "pending");
+    // "Yes to all follows in this task": the rest go through at once, on the record.
+    const again = store.approvals("pending")[0];
+    await hub.decideApproval(again.code, { decision: "approve", nonce: "b", scope: "task" });
+    const third = follow(job);
+    assert.equal(third.status, "approved");
+    assert.equal(store.approval(third.id).note, "allowed for this task");
+    assert.equal(follow(job, "post").status, "pending", "only the kind that was allowed");
+    // Not for another task, and never for a run started by an email.
+    assert.equal(follow(running()).status, "pending");
+    const mail = running(true);
+    const m = follow(mail);
+    assert.equal(m.payload.grant, undefined);
+    await hub.decideApproval(m.code, { decision: "approve", nonce: "c", scope: "task" });
+    assert.equal(follow(mail).status, "pending");
+    // The task ends: so does its yes.
+    hub.finish(store.job(job.id), "done", { result: "ok" });
+    store.updateJob(job.id, { status: "running" });
+    assert.equal(follow(job).status, "pending");
   } finally {
     store.close();
   }

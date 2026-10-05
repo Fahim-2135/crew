@@ -39,6 +39,9 @@ export async function askOwner(request, env = process.env) {
     };
   }
 
+  // Already yes: the user said yes to all of these for this task.
+  if (approval.status === "approved")
+    return { allow: true, reason: `${Owner()} said yes to these for this task.` };
   const until = Date.now() + WAIT_MS;
   while (Date.now() < until) {
     await new Promise((r) => setTimeout(r, POLL_MS));

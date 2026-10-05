@@ -367,6 +367,7 @@ function renderApprovals(agent) {
       }
       const dl = document.createElement("dl");
       for (const [k, v] of Object.entries(a.payload ?? {})) {
+        if (k === "grant") continue;
         const dt = document.createElement("dt");
         dt.textContent = k;
         const dd = document.createElement("dd");
@@ -384,9 +385,23 @@ function renderApprovals(agent) {
       no.type = "button";
       no.className = "deny";
       no.textContent = "Deny";
-      yes.addEventListener("click", () => decide(a.code, "approve", [yes, no]));
-      no.addEventListener("click", () => decide(a.code, "deny", [yes, no]));
-      actions.append(yes, no);
+      const buttons = [yes, no];
+      yes.addEventListener("click", () => decide(a.code, "approve", buttons));
+      no.addEventListener("click", () => decide(a.code, "deny", buttons));
+      // Follows and the like: yes to this one, or to all of them for the rest of the task.
+      const grant = GRANT_LABELS[a.payload?.grant];
+      if (grant) {
+        yes.textContent = "Just this one";
+        const all = document.createElement("button");
+        all.type = "button";
+        all.className = "approve";
+        all.textContent = `Yes to all ${grant} in this task`;
+        all.addEventListener("click", () => decide(a.code, "approve", buttons, "task"));
+        buttons.push(all);
+        actions.append(yes, all, no);
+      } else {
+        actions.append(yes, no);
+      }
       card.append(actions);
       return card;
     }),
@@ -470,12 +485,15 @@ async function send(event) {
   }
 }
 
-async function decide(code, decision, buttons) {
+/** What a "yes to all" covers (core/gate.mjs GRANTS). */
+const GRANT_LABELS = { follow: "follows and connects" };
+
+async function decide(code, decision, buttons, scope = "once") {
   for (const b of buttons) b.disabled = true;
   try {
     await api(`/v1/approvals/${code}/decision`, {
       method: "POST",
-      body: JSON.stringify({ decision, nonce: crypto.randomUUID() }),
+      body: JSON.stringify({ decision, scope, nonce: crypto.randomUUID() }),
     });
     await refresh();
   } catch (err) {

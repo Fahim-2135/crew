@@ -42,5 +42,6 @@ const answer = await askOwner({
   tool: call.tool_name,
   summary: gate.summary,
   reason: gate.reason,
+  grant: gate.grant,
 });
 decide(answer.allow ? "allow" : "deny", answer.reason);

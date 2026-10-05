@@ -28,6 +28,7 @@ import { pushFor } from "./core/push.mjs";
 import { terminalTurns } from "./core/transcript.mjs";
 import { MAX_PER_MESSAGE, attachmentNote, kindOf } from "./core/attachments.mjs";
 import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./core/teamtalk.mjs";
+import { GRANTS } from "./core/gate.mjs";
 import { ICON_NAMES } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -112,6 +113,8 @@ export class Hub extends EventEmitter {
     this.running = new Map();
     /** Questions in flight (ask_teammate): ask job id -> { from, fromJob, to }. */
     this.asks = new Map();
+    /** "Yes to all of these for this task": job id -> kinds (core/gate.mjs GRANTS). */
+    this.grants = new Map();
     /** Their promises, so shutdown can wait for every one to record how it ended. */
     this.current = new Set();
     this.stopped = false;
@@ -811,6 +814,8 @@ export class Hub extends EventEmitter {
     if (!job || job.status !== "running") {
       throw new HubError(403, "only the run in progress can ask for a quick OK");
     }
+    // Some kinds (follows) can be allowed for the rest of the task; never for a run from email.
+    const grant = !job.tainted && Object.hasOwn(GRANTS, input.grant) ? input.grant : null;
     const taken = new Set(this.store.approvals("pending").map((a) => a.code));
     const approval = this.store.addApproval({
       id: randomBytes(16).toString("hex"),
@@ -820,12 +825,23 @@ export class Hub extends EventEmitter {
       type: "gate",
       summary: String(input.summary ?? "").slice(0, 200) || String(input.tool),
       why: String(input.reason ?? "").slice(0, 200),
-      payload: { tool: String(input.tool ?? "") },
+      payload: { tool: String(input.tool ?? ""), ...(grant ? { grant } : {}) },
       preconditions: {},
       tainted: Boolean(job.tainted),
       createdAt: this.now(),
       expiresAt: this.now() + GATE_WAIT_MS,
     });
+    if (grant && this.grants.get(job.id)?.has(grant)) {
+      // Already a yes for all of these in this task: on the record, no question.
+      this.store.updateApproval(approval.id, {
+        status: "approved",
+        decision: "approve",
+        note: "allowed for this task",
+        decidedAt: this.now(),
+      });
+      this.event("approval.approved", { id: approval.id, code: approval.code, agent: job.agent });
+      return publicApproval(this.store.approval(approval.id));
+    }
     this.event("approval.requested", publicApproval(approval));
     return publicApproval(approval);
   }
@@ -859,7 +875,14 @@ export class Hub extends EventEmitter {
     });
 
     // A quick OK: the agent is waiting on it mid-run (gate-hook.mjs) and carries on by itself.
-    if (approval.type === "gate") return publicApproval(this.store.approval(approval.id));
+    if (approval.type === "gate") {
+      const grant = approval.payload?.grant;
+      if (verdict.status === "approved" && grant && input.scope === "task") {
+        if (!this.grants.has(approval.jobId)) this.grants.set(approval.jobId, new Set());
+        this.grants.get(approval.jobId).add(grant);
+      }
+      return publicApproval(this.store.approval(approval.id));
+    }
 
     if (verdict.status === "denied") {
       this.notify(
@@ -1370,6 +1393,7 @@ export class Hub extends EventEmitter {
     this.store.updateJob(job.id, { status, endedAt: this.now(), ...fields });
     this.memorySyncFinished(job, status);
     this.teamFinished(job, status, fields);
+    this.grants.delete(job.id);
     if (status !== "done" && this.team().includes(job.agent)) {
       const text = status === "cancelled" ? "Stopped." : `Couldn't finish: ${fields.error}`;
       this.store.addMessage({
