@@ -64,12 +64,42 @@ const WRITE_SQL =
  */
 const BROWSER = /__browser_([a-z][a-z_]*)$/;
 const OUTWARD =
-  /\b(post|posts|publish|send|submit|share|repost|like|react|follow|connect|invite|buy|pay|purchase|order|checkout|check out|subscribe|donate|delete|remove|discard|trash|confirm|approve|accept|agree|sign ?up|register|create account|log ?out|sign ?out|withdraw|transfer|roll ?out|release|promote|go live|deploy|place)\b/i;
-/** Buttons that only open a box to write in: "Start a post", "New message". */
-const OPENS_EDITOR = /^\s*(start|create|write|new|draft)\s+(a\s+|an\s+)?(post|message|article)\b/i;
+  /\b(post|publish|send|submit|share|repost|comment|reply|like|react|follow|connect|invite|buy|pay|purchase|order|checkout|check out|subscribe|donate|delete|remove|discard|trash|confirm|approve|accept|agree|sign ?up|register|create account|log ?out|sign ?out|withdraw|transfer|roll ?out|release|promote|go live|deploy|place)\b/i;
+/**
+ * Buttons that only open a box to write in: "Start a post", "New message", "Open the comment
+ * box", "Add a comment" (the agent describes what it clicks; crewNote asks it to say so).
+ */
+const OPENS_EDITOR =
+  /^\s*((start|create|write|new|draft)\s+(a\s+|an\s+)?(post|message|article)\b|(open|show|add)\s+(the\s+|a\s+)?(comment|reply)(\s+(box|field|editor))?\b)/i;
+/**
+ * Page scripts (browser_evaluate) that do more than read: clicking, submitting, typing, sending
+ * anything off the page, navigating, changing the page or its storage, or hiding a call behind
+ * computed names. A script with none of these only reads (counts, numbers, text) and goes freely.
+ */
+const ACTING_SCRIPT = [
+  /\.\s*(click|submit|requestSubmit|dispatchEvent|focus|blur|select|setRangeText|showPicker)\s*\(/,
+  /\bnew\s+\w*(Event|Request)\b/,
+  /\b(fetch|sendBeacon|postMessage|importScripts|open)\s*\(/,
+  /\bnew\s+(XMLHttpRequest|WebSocket|EventSource|Image|Worker|SharedWorker)\b/,
+  /\b(execCommand|eval|Function|Reflect|Proxy|import)\s*\(/,
+  /\b(setTimeout|setInterval)\s*\(\s*[^\s\w(]/, // a wait is fine; code in a string is not
+  /\.\s*(value|checked|selected|innerHTML|outerHTML|innerText|textContent|src|href|action|cookie|location|hash|search)\s*(=(?!=)|\+=)/,
+  /\b(location|document\.cookie)\s*=(?!=)/,
+  /\b(location|history|localStorage|sessionStorage|indexedDB|caches|navigator\.clipboard)\s*\.\s*(assign|replace|reload|push|back|forward|go|set|remove|clear|open|delete|write)/,
+  // Adding to the page can load from elsewhere; taking things away (removeAttribute) can't.
+  /\.\s*(append|prepend|appendChild|insertBefore|replaceWith|replaceChildren|insertAdjacent\w*|before|after)\s*\(/,
+  // Marking an element to find it again is fine; an attribute that loads or runs is not.
+  /\.\s*setAttribute\s*\((?!\s*['"`](data-[\w-]+|aria-[\w-]+|class|id|title)['"`]\s*,)/,
+  /\]\s*\(/, // obj["cl" + "ick"]()
+  /\bwith\s*\(|\batob\s*\(|\\u[0-9a-f]{4}|\\x[0-9a-f]{2}/i,
+];
+const readsOnly = (script) => {
+  const s = String(script ?? "");
+  return s.length > 0 && s.length <= 4000 && !ACTING_SCRIPT.some((p) => p.test(s));
+};
+
 /** Browser actions whose effect can't be read from their input: they always ask. */
 const BROWSER_OPAQUE = new Set([
-  "evaluate",
   "run_code_unsafe",
   "webmcp_call",
   "mouse_click_xy",
@@ -85,6 +115,10 @@ const BROWSER_OPAQUE = new Set([
 /** @returns {{ ask: boolean, reason?: string, summary?: string } | null} */
 function browserGate(action, input) {
   const what = oneLine(input.element ?? input.selector ?? input.ref ?? "");
+  if (action === "evaluate") {
+    if (readsOnly(input.function ?? input.expression)) return null;
+    return ask("a page script that may act", "Browser: run a script on the page");
+  }
   if (BROWSER_OPAQUE.has(action)) {
     return ask("a browser action Crew can't read", `Browser ${action.replace(/_/g, " ")}`);
   }
