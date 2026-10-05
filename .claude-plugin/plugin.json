@@ -1,0 +1,7 @@
+{
+  "name": "crew",
+  "version": "0.9.3",
+  "description": "An always-on team of AI agents on your own computer: chat with them in the Crew window, and they work with your files, the web, your apps and the screen. Anything that can't be undone asks you first.",
+  "author": { "name": "Fahim", "url": "https://github.com/Fahim-2135" },
+  "license": "MIT"
+}

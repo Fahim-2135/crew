@@ -1,0 +1,27 @@
+{
+  "name": "crew",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crew: an always-on team of AI agents on your own computer, built on Claude Code.",
+  "type": "module",
+  "bin": {
+    "crew": "hub/bin/crew.mjs"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=60000 \"hub/test/**/*.test.mjs\" \"shared/**/*.test.mjs\"",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "start": "node hub/bin/crew.mjs start"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3"
+  }
+}

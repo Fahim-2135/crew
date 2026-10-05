@@ -1,0 +1,4 @@
+{
+  "description": "The Crew team panel",
+  "modules": ["./crew.mjs"]
+}

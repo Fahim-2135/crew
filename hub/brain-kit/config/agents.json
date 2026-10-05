@@ -1,0 +1,6 @@
+{
+  "_comment": "Where each agent may write inside the brain. Crew adds a line for every new agent.",
+  "agents": {
+    "ceo": { "write": ["**"], "outside": "write" }
+  }
+}

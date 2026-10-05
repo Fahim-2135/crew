@@ -1,0 +1,18 @@
+{
+  "name": "crew",
+  "owner": {
+    "name": "Fahim",
+    "url": "https://github.com/Fahim-2135"
+  },
+  "metadata": {
+    "description": "Crew: an always-on team of AI agents on your own computer, built on Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "crew",
+      "source": "./",
+      "description": "An always-on team of AI agents on your own computer, built on Claude Code. After installing, run /crew:setup.",
+      "license": "MIT"
+    }
+  ]
+}

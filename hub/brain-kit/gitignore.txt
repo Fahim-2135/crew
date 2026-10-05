@@ -1,0 +1,8 @@
+# Never commit secrets or scratch files.
+.env
+.env.*
+*.key
+*.pem
+node_modules/
+.DS_Store
+Thumbs.db
