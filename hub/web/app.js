@@ -3,7 +3,7 @@
 // fragment; the page trades it for the key, keeps the key in this window's storage, and wipes
 // the code from the address.
 
-import { ICON_NAMES, faceGrid } from "/faces.mjs";
+import { ICON_NAMES, faceGrid, iconFor } from "/faces.mjs";
 import { splitLinks } from "/links.mjs";
 
 const TITLES = {
@@ -574,7 +574,8 @@ function openProfile() {
   if (!agent) return;
   const me = state.agents.find((a) => a.id === agent);
   profile.agent = agent;
-  profile.icon = me?.icon ?? null;
+  // The icon it wears now: the one picked, or its own default.
+  profile.icon = me?.icon ?? iconFor(agent);
   $("profile-name").value = titleOf(agent);
   $("profile-was").textContent = "Only the name on screen changes. It'll be told its new name.";
   $("profile-note").textContent = "";
@@ -590,7 +591,8 @@ async function saveProfile(event) {
   const title = $("profile-name").value.trim();
   const body = {};
   if (title && title !== titleOf(agent)) body.title = title;
-  if (profile.icon && profile.icon !== state.agents.find((a) => a.id === agent)?.icon) {
+  const wearing = state.agents.find((a) => a.id === agent)?.icon ?? iconFor(agent);
+  if (profile.icon && profile.icon !== wearing) {
     body.icon = profile.icon;
   }
   if (!Object.keys(body).length) return $("profile").close();
