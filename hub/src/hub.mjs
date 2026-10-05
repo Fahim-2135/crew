@@ -29,7 +29,7 @@ import { terminalTurns } from "./core/transcript.mjs";
 import { MAX_PER_MESSAGE, attachmentNote, kindOf } from "./core/attachments.mjs";
 import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./core/teamtalk.mjs";
 import { GRANTS } from "./core/gate.mjs";
-import { ICON_NAMES } from "../../shared/faces.mjs";
+import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
 
@@ -1211,6 +1211,9 @@ export class Hub extends EventEmitter {
       // For claude-face: clicking the face on this agent opens it in the Crew window.
       CREW_CLI: this.paths.cli ?? "",
       CREW_NODE: this.nodeBin,
+      // ...and draws this agent's own face (its Critter) and name.
+      CREW_ICON: iconFor(job.agent, this.iconOf(job.agent)),
+      CREW_TITLE: this.titleOf(job.agent),
       // No usage reports home from tools that send them (HyperFrames reads both).
       HYPERFRAMES_NO_TELEMETRY: "1",
       DO_NOT_TRACK: "1",

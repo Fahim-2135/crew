@@ -135,9 +135,12 @@ down on a reply makes the agent review how it works.
 
 <img src="assets/readme/claude-face.png" alt="claude-face in its four states: working, needs you, done and idle" width="760">
 
-A small face that floats on your screen and shows what your agents are doing, so you don't
-have to keep checking the window. Click it to jump to the agent that needs you. `/crew:setup`
-offers to install it; turn it on or off with the face button at the top of the Crew window.
+A little crew that floats on your screen and shows what your agents are doing, so you don't
+have to keep checking the window. The agent that matters most steps forward, wearing its own
+face and name: one that needs you, then one that has just finished, then one at work. The others
+wait small in the corners. Click it to jump to that agent in Crew. Minimised, it's a small round
+badge with just that face. `/crew:setup` offers to install it; turn it on or off with the
+**Face** switch at the top of the Crew window.
 
 ---
 

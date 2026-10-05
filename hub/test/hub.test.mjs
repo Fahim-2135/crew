@@ -129,6 +129,9 @@ test("a run starts like the terminal: the agent itself, the user's settings, and
     assert.match(gate.hooks[0].command, /gate-hook.mjs"$/);
     assert.equal(env.CREW_JOB, String(store.latestJob("engineering").id));
     assert.equal(env.CREW_WORKER, "1");
+    // claude-face draws the agent's own face and name.
+    assert.equal(env.CREW_ICON, "antenna");
+    assert.equal(env.CREW_TITLE, "Engineering");
   } finally {
     await hub.shutdown();
     store.close();
