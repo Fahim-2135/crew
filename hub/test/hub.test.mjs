@@ -350,3 +350,31 @@ test("a session that already exists is resumed instead of failing", async () => 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("out of usage, the team cries; one that needs the user still asks", async () => {
+  const { root, store, hub } = setup();
+  try {
+    assert.equal(hub.budget().limit, null);
+    assert.ok(hub.agents().every((a) => a.state === "idle"));
+    store.set("usage", { fiveHour: 1, sevenDay: 0.3, at: Date.now() });
+    assert.equal(hub.budget().limit.which, "five-hour");
+    assert.ok(hub.agents().every((a) => a.state === "limit"));
+    const job = store.addJob({
+      agent: "social",
+      kind: "chat",
+      priority: 0,
+      prompt: "x",
+      createdAt: 1,
+    });
+    store.updateJob(job.id, { status: "running" });
+    hub.gateRequest({ jobId: job.id, tool: "Bash", summary: "Run: rm -rf x", reason: "deletes" });
+    store.updateJob(job.id, { status: "done", endedAt: Date.now() });
+    const states = Object.fromEntries(hub.agents().map((a) => [a.id, a.state]));
+    assert.equal(states.social, "asking");
+    assert.equal(states.ceo, "limit");
+  } finally {
+    await hub.shutdown();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

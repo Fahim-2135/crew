@@ -8,7 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { crewNote, buildArgs, runSettings } from "./core/policy.mjs";
-import { admit, halfRate, PRIORITY } from "./core/budget.mjs";
+import { admit, halfRate, PRIORITY, usageLimit } from "./core/budget.mjs";
 import { rotationReason, handover } from "./core/rotation.mjs";
 import { blockedBy, dueSchedules, localParts, startOfLocalDay } from "./core/schedule.mjs";
 import { isOpen, wakePrompt } from "./core/inbox.mjs";
@@ -461,8 +461,14 @@ export class Hub extends EventEmitter {
 
   // --- what the API exposes
 
+  /** The plan's usage limit, while it is reached (core/budget.mjs usageLimit). */
+  limit() {
+    return usageLimit(this.store.get("usage"), this.store.get("limitHitAt"), this.now());
+  }
+
   agents() {
     const queued = this.store.queuedJobs();
+    const limit = this.limit();
     const pending = this.store.approvals("pending");
     return this.team().map((id) => {
       const latest = this.store.latestJob(id);
@@ -477,6 +483,8 @@ export class Hub extends EventEmitter {
       else if (latest?.status === "done" && this.now() - (latest.endedAt ?? 0) < DONE_FOR_MS) {
         state = "done";
       }
+      // Out of usage: everyone cries, except one at work or one that needs the user.
+      if (limit && state !== "working" && state !== "asking") state = "limit";
       return {
         id,
         title: this.titleOf(id),
@@ -613,6 +621,7 @@ export class Hub extends EventEmitter {
     return {
       usage: this.store.get("usage"),
       limitHitAt: this.store.get("limitHitAt"),
+      limit: this.limit(),
       paused: Boolean(this.store.get("paused", false)),
       // The phone app is in use here (pairing shows in the window).
       phones: Boolean(this.config.phones),

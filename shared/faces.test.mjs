@@ -2,16 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   AGENTS,
+  APP_ICON,
+  CRITTERS,
   DEFAULT_ICONS,
   ICON_NAMES,
-  MOODS,
-  MOOD_COLORS,
-  faceGrid,
-  halfBlocks,
+  STATES,
+  appIconSVG,
+  critterMarkup,
+  faceSVG,
   iconFor,
 } from "./faces.mjs";
 
-test("the first eight each have their own icon, and there are 25 to choose from", () => {
+test("the first eight each have their own Critter, and there are 25 to choose from", () => {
   assert.deepEqual(AGENTS, [
     "ceo",
     "product",
@@ -24,65 +26,72 @@ test("the first eight each have their own icon, and there are 25 to choose from"
   ]);
   assert.equal(ICON_NAMES.length, 25);
   assert.deepEqual(ICON_NAMES.slice(0, 8), Object.values(DEFAULT_ICONS));
+  for (const c of Object.values(CRITTERS)) assert.match(c.color, /^#[0-9A-F]{6}$/i);
 });
 
-test("every face, with every icon, in every state and frame, is a 16×16 grid of colours or null", () => {
+test("every Critter draws in every state, with and without motion, as balanced markup", () => {
+  const tags = (s) => {
+    const open = (s.match(/<(g|svg|defs|filter|radialGradient)(\s[^>]*)?(?<!\/)>/g) ?? []).length;
+    const close = (s.match(/<\/(g|svg|defs|filter|radialGradient)>/g) ?? []).length;
+    return [open, close];
+  };
   for (const icon of ICON_NAMES) {
-    for (const mood of MOODS) {
-      for (const frame of [1, 3, 4, 9]) {
-        const grid = faceGrid("ceo", mood, frame, icon);
-        assert.equal(grid.length, 16);
-        for (const row of grid) {
-          assert.equal(row.length, 16);
-          for (const cell of row) assert.ok(cell === null || /^#[0-9A-F]{6}$/i.test(cell));
-        }
+    for (const state of [...STATES, "smile"]) {
+      for (const motion of [true, false]) {
+        const svg = faceSVG(icon, state, { motion });
+        assert.match(svg, /^<svg class="critter" viewBox="0 0 100 100"/);
+        assert.ok(!svg.includes("undefined") && !svg.includes("NaN"), `${icon} ${state}`);
+        const [open, close] = tags(svg);
+        assert.equal(open, close, `${icon} ${state} motion=${motion}`);
       }
     }
   }
 });
 
-test("the body colour follows the state", () => {
-  for (const mood of MOODS) {
-    const grid = faceGrid("ceo", mood);
-    assert.equal(grid[10][8], MOOD_COLORS[mood].B, mood); // a body cell between eyes and mouth
-    assert.equal(grid[8][0], MOOD_COLORS[mood].O, mood); // the outline
-  }
+test("each state has its own face; motion adds the moving parts only where they move", () => {
+  const m = (state, motion = true) => critterMarkup("crown", state, { motion });
+  assert.match(m("idle"), /class="zz"/, "idle dozes");
+  assert.match(m("working"), /class="ph-jump"[\s\S]*class="ph-whoosh"/, "jacks, then whoosh");
+  assert.match(
+    m("working"),
+    /<g class="jackL"><circle [^>]*fill="none"\/>/,
+    "pivots at the shoulder",
+  );
+  assert.doesNotMatch(
+    faceSVG("crown", "done"),
+    /style=/,
+    "no inline styles: the window forbids them",
+  );
+  assert.doesNotMatch(m("working", false), /ph-whoosh|style=/, "a still pose for the phone");
+  assert.match(m("asking"), /class="tear"/, "eyes brimming");
+  assert.match(m("done"), /class="spark/, "sparkles on the hop");
+  assert.doesNotMatch(m("done", false), /spark/);
+  assert.match(m("done"), /class="waveR"/);
+  assert.match(m("limit"), /class="tear late"/, "crying");
+  assert.doesNotMatch(m("smile"), /zz|tear|spark/);
 });
 
-test("agents differ by icon; a picked icon replaces the agent's own", () => {
-  const top = (g) => JSON.stringify(g.slice(0, 5));
-  assert.notEqual(top(faceGrid("ceo", "done")), top(faceGrid("ops", "done")));
-  assert.equal(top(faceGrid("ceo", "done", 1, "hardhat")), top(faceGrid("ops", "done")));
-  assert.equal(top(faceGrid("ceo", "done", 1, "not-an-icon")), top(faceGrid("ceo", "done")));
-});
-
-test("working strains, then breathes out; idle and asking blink", () => {
-  assert.deepEqual(faceGrid("ops", "working", 1), faceGrid("ops", "working", 2));
-  assert.notDeepEqual(faceGrid("ops", "working", 1), faceGrid("ops", "working", 3));
-  assert.deepEqual(faceGrid("ops", "working", 1), faceGrid("ops", "working", 5));
-  assert.notDeepEqual(faceGrid("ops", "idle", 1), faceGrid("ops", "idle", 9));
-  assert.notDeepEqual(faceGrid("ops", "asking", 1), faceGrid("ops", "asking", 9));
-});
-
-test("created agents get a spare icon from their name; the app icon's face wears none", () => {
+test("created agents get a spare Critter from their name; a picked one wins", () => {
   assert.equal(iconFor("reviews", null), iconFor("reviews", null));
   assert.ok(ICON_NAMES.slice(8).includes(iconFor("reviews")));
   assert.equal(iconFor("reviews", "wizard"), "wizard");
   assert.equal(iconFor("ceo"), "crown");
-  assert.equal(iconFor("crew"), null);
+  assert.equal(iconFor("ceo", "not-an-icon"), "crown");
   const picks = new Set(
     ["reviews", "finance", "health", "study", "travel", "music"].map((a) => iconFor(a)),
   );
   assert.ok(picks.size >= 3);
 });
 
-test("unknown states still draw", () => {
-  assert.equal(faceGrid("nobody", "confused").length, 16);
+test("unknown icons and states still draw", () => {
+  assert.match(faceSVG("nobody", "confused"), /^<svg/);
 });
 
-test("half blocks fold 16 rows into 8 terminal rows", () => {
-  const cells = halfBlocks(faceGrid("social", "asking"));
-  assert.equal(cells.length, 8);
-  assert.equal(cells[0].length, 16);
-  assert.deepEqual(Object.keys(cells[4][8]), ["top", "bottom"]);
+test("the app icon: Fahim's five on the round badge, or as a silhouette", () => {
+  assert.deepEqual(APP_ICON.pick, ["crown", "headset", "bandana", "tophat", "antenna"]);
+  const icon = appIconSVG();
+  assert.equal((icon.match(/<svg x=/g) ?? []).length, 5);
+  assert.match(icon, /<circle cx="100" cy="100" r="100" fill="#F1ECE1"\/>/);
+  assert.doesNotMatch(appIconSVG({ background: null }), /r="100"/, "transparent foreground");
+  assert.match(appIconSVG({ silhouette: "#ffffff", background: null }), /crew-flat/);
 });

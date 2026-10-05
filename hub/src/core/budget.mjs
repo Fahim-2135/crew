@@ -63,6 +63,32 @@ export function admit(job, usage, context) {
   return fiveHour < bar ? yes() : no(`five-hour usage at ${Math.round(fiveHour * 100)}%`);
 }
 
+/**
+ * Whether the plan's usage limit is reached right now: the 5-hour or the weekly window at 100%,
+ * or Claude refused a run for its limit a moment ago. The faces cry while it lasts.
+ * @param {{ fiveHour: number | null, sevenDay: number | null, resetsAt?: number | null, at: number } | null} usage
+ * @param {number | null} limitHitAt
+ * @param {number} now
+ * @returns {{ which: "weekly" | "five-hour", until: number | null } | null}
+ */
+export function usageLimit(usage, limitHitAt, now) {
+  const fresh = usage && now - usage.at < LIMITS.stale;
+  // resetsAt arrives in seconds from Claude Code; keep it in ms.
+  const reset =
+    fresh && usage.resetsAt ? usage.resetsAt * (usage.resetsAt < 1e12 ? 1000 : 1) : null;
+  const until = reset && reset > now ? reset : null;
+  if (fresh && usage.sevenDay != null && usage.sevenDay >= 1) return { which: "weekly", until };
+  if (fresh && usage.fiveHour != null && usage.fiveHour >= 1) return { which: "five-hour", until };
+  if (limitHitAt && now - limitHitAt < LIMITS.pauseAfterLimit) {
+    const sevenDayHigh = fresh && usage.sevenDay != null && usage.sevenDay >= LIMITS.weekStopAbove;
+    return {
+      which: sevenDayHigh ? "weekly" : "five-hour",
+      until: until ?? limitHitAt + LIMITS.pauseAfterLimit,
+    };
+  }
+  return null;
+}
+
 const yes = () => ({ ok: true, reason: null, warn: false });
 const no = (reason) => ({ ok: false, reason, warn: false });
 

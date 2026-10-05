@@ -46,8 +46,10 @@ You start with four agents, each with a face and a job:
 | **Writer**   | Posts, emails, documents and scripts, in your voice                      |
 | **Builder**  | Hands-on work on the computer: code, files, automation, setting up tools |
 
-They **work side by side** (several at once, each on its own task), and their faces show at a
-glance who is working (blue), who needs you (orange) and who is done (green).
+They **work side by side** (several at once, each on its own task). Each one is a little
+character (25 to choose from) whose face shows what it is doing: dozing when idle, doing
+jumping jacks while it works, hand up and teary-eyed when it needs you, waving and hopping when
+it is done, and crying if your Claude plan runs out of usage.
 
 ### They talk to each other
 

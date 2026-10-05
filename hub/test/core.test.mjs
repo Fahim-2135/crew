@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseAgentFile, STARTER_TEAM } from "../src/core/agents.mjs";
 import { parseStreamLine, contextTokens } from "../src/core/stream.mjs";
 import { buildArgs, crewNote, runSettings } from "../src/core/policy.mjs";
-import { admit, PRIORITY } from "../src/core/budget.mjs";
+import { admit, PRIORITY, usageLimit } from "../src/core/budget.mjs";
 import { rotationReason, handover, ROTATION } from "../src/core/rotation.mjs";
 
 const SOCIAL = `---
@@ -245,4 +245,26 @@ test("routines run every other day while weekly use is high", async () => {
   assert.equal(halfRate({ sevenDay: 0.5, at: now }, "2026-10-05", now), false);
   assert.equal(halfRate({ sevenDay: 0.9, at: now - 31 * 60_000 }, "2026-10-05", now), false);
   assert.equal(halfRate(null, "2026-10-05", now), false);
+});
+
+test("the usage limit: either window at 100%, or a limit error a moment ago", () => {
+  const now = 1_800_000_000_000;
+  const reading = (fiveHour, sevenDay, extra = {}) => ({
+    fiveHour,
+    sevenDay,
+    at: now - 60_000,
+    ...extra,
+  });
+  assert.equal(usageLimit(reading(0.5, 0.4), null, now), null);
+  assert.deepEqual(usageLimit(reading(1, 0.4, { resetsAt: 1_800_003_600 }), null, now), {
+    which: "five-hour",
+    until: 1_800_003_600_000,
+  });
+  assert.equal(usageLimit(reading(0.3, 1), null, now).which, "weekly");
+  assert.equal(usageLimit({ ...reading(1, 1), at: now - 2 * 3_600_000 }, null, now), null, "stale");
+  const hit = usageLimit(reading(0.7, 0.2), now - 60_000, now);
+  assert.equal(hit.which, "five-hour");
+  assert.equal(hit.until, now - 60_000 + 30 * 60_000);
+  assert.equal(usageLimit(reading(0.7, 0.9), now - 60_000, now).which, "weekly");
+  assert.equal(usageLimit(null, now - 31 * 60_000, now), null, "the pause is over");
 });

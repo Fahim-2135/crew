@@ -3,7 +3,7 @@
 // fragment; the page trades it for the key, keeps the key in this window's storage, and wipes
 // the code from the address.
 
-import { ICON_NAMES, faceGrid, iconFor } from "/faces.mjs";
+import { CRITTERS, ICON_NAMES, faceSVG, iconFor } from "/faces.mjs";
 import { splitLinks } from "/links.mjs";
 
 const TITLES = {
@@ -16,8 +16,15 @@ const TITLES = {
   learning: "Learning",
   coder: "Coder",
 };
-const STATE_WORDS = { idle: "idle", working: "working…", asking: "needs you", done: "done" };
-const FRAME_MS = 450;
+const STATE_WORDS = {
+  idle: "resting",
+  working: "working…",
+  asking: "needs you",
+  done: "done",
+  limit: "out of usage",
+};
+/** The tag beside an agent in the sidebar, for the states worth a glance. */
+const STATE_PILLS = { working: "working", asking: "needs you", limit: "limit" };
 
 const $ = (id) => document.getElementById(id);
 /** Agents the user created carry their own names; the first eight have these. */
@@ -33,7 +40,8 @@ const state = {
   /** Files waiting to go with the next message: { key, file, status, meta, preview }. */
   pending: [],
   seq: 0,
-  frame: 1,
+  /** The plan's usage limit while it is reached: { which, until }. */
+  limit: null,
 };
 
 // ---- the key
@@ -83,32 +91,23 @@ function showLocked() {
 
 // ---- faces
 
-function faceSvg(agent, mood, frame, icon) {
-  let rects = "";
-  faceGrid(agent, mood, frame, icon).forEach((row, y) =>
-    row.forEach((fill, x) => {
-      if (fill) rects += `<rect x="${x}" y="${y}" width="1.02" height="1.02" fill="${fill}"/>`;
-    }),
-  );
-  return `<svg viewBox="0 0 16 16" aria-hidden="true">${rects}</svg>`;
-}
-
 /**
- * Draw every face on the page. An element can fix its own icon or mood (the icon pickers);
- * otherwise it shows the agent's own icon and current state.
+ * Draw every face on the page: a Critter (faces.mjs) that moves with CSS for its state. An
+ * element can fix its own icon or state (the icon pickers, reply avatars); otherwise it shows
+ * the agent's own icon and current state.
  */
 function paintFaces() {
   for (const el of document.querySelectorAll("[data-face]")) {
     const agent = el.dataset.face;
     const me = state.agents.find((a) => a.id === agent);
     const mood = el.dataset.mood ?? me?.state ?? "idle";
-    const icon = el.dataset.icon ?? me?.icon ?? null;
-    // Faces are drawn from fixed colour grids (faces.mjs); no outside text reaches innerHTML.
-    const svg = faceSvg(agent, mood, state.frame, ICON_NAMES.includes(icon) ? icon : null);
-    if (el.dataset.drawn !== svg) {
-      el.innerHTML = svg;
-      el.dataset.drawn = svg;
-    }
+    const icon = iconFor(agent, el.dataset.icon ?? me?.icon ?? null);
+    const key = `${icon}:${mood}`;
+    if (el.dataset.drawn === key) continue;
+    // Faces are built from fixed drawings (faces.mjs); no outside text reaches innerHTML.
+    el.innerHTML = faceSVG(icon, mood, { label: CRITTERS[icon].label });
+    el.dataset.state = mood;
+    el.dataset.drawn = key;
   }
 }
 
@@ -130,7 +129,19 @@ const THUMB_DOWN =
 
 // ---- drawing
 
-/** One agent in the sidebar: its face, name, a line, and a status dot. */
+/** When something happened, as the sidebar shows it: 9:14 PM, Yesterday, Fri, or 3 Oct. */
+function whenText(at) {
+  const d = new Date(at);
+  const now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(now) - day(d)) / 86_400_000);
+  if (days <= 0) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+/** One agent in the sidebar: its face, name, last line, when, and a tag for its state. */
 function memberButton(a, { line, wants, index }) {
   const li = document.createElement("li");
   const button = document.createElement("button");
@@ -154,11 +165,18 @@ function memberButton(a, { line, wants, index }) {
   sub.textContent = line;
   text.append(name, sub);
 
-  const dot = document.createElement("span");
-  dot.className = `dot ${a.state}`;
-  dot.title = STATE_WORDS[a.state] ?? a.state;
+  const meta = document.createElement("span");
+  meta.className = "member-meta";
+  if (a.lastAt && !wants) meta.append(document.createTextNode(whenText(a.lastAt)));
+  const pill = wants ? STATE_PILLS.asking : STATE_PILLS[a.state];
+  if (pill) {
+    const tag = document.createElement("span");
+    tag.className = `pill ${wants ? "asking" : a.state}`;
+    tag.textContent = pill;
+    meta.append(tag);
+  }
 
-  button.append(face, text, dot);
+  button.append(face, text, meta);
   li.append(button);
   return li;
 }
@@ -198,7 +216,18 @@ function renderTeam() {
   );
   const u = state.usage;
   const pct = (x) => (x == null ? "?" : `${Math.round(x * 100)}%`);
-  $("usage").textContent = `plan ${pct(u?.fiveHour)} · wk ${pct(u?.sevenDay)}`;
+  const usage = $("usage");
+  usage.classList.toggle("limit", Boolean(state.limit));
+  if (state.limit) {
+    const until = state.limit.until
+      ? ` · back ${new Date(state.limit.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+      : "";
+    usage.textContent = `${state.limit.which === "weekly" ? "weekly" : "5-hour"} limit${until}`;
+    usage.title = "Your Claude plan's usage limit is reached: the agents wait until it resets";
+  } else {
+    usage.textContent = `${pct(u?.fiveHour)} · wk ${pct(u?.sevenDay)}`;
+    usage.title = "Your Claude plan use: this 5-hour window, and this week";
+  }
   document.title = waiting.length ? `(${waiting.length}) Crew` : "Crew";
   paintFaces();
 }
@@ -226,12 +255,19 @@ function renderThread() {
 
   const list = $("messages");
   const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  const items = (state.messages[agent] ?? []).map((m) => messageItem(agent, m));
-  if (me.state === "working") {
-    items.push(messageItem(agent, { role: "typing", text: `${titleOf(agent)} is working…` }));
+  const msgs = state.messages[agent] ?? [];
+  const last = msgs.at(-1);
+  // Rebuild only when something changed: a rebuild restarts the faces' motion.
+  const key = JSON.stringify([agent, msgs.length, last?.id, last?.text, me.state === "working"]);
+  if (list.dataset.key !== key) {
+    list.dataset.key = key;
+    const items = msgs.map((m) => messageItem(agent, m));
+    if (me.state === "working") {
+      items.push(messageItem(agent, { role: "typing", text: `${titleOf(agent)} is working…` }));
+    }
+    list.replaceChildren(...items);
+    if (atBottom) list.scrollTop = list.scrollHeight;
   }
-  list.replaceChildren(...items);
-  if (atBottom) list.scrollTop = list.scrollHeight;
   paintFaces();
 }
 
@@ -240,14 +276,13 @@ function messageItem(agent, m) {
   li.className = `message ${m.role === "team" ? "team-line" : m.role}`;
   const who = document.createElement("div");
   who.className = "who";
-  who.textContent =
-    m.role === "you"
-      ? "you"
-      : m.role === "note"
-        ? "crew"
-        : m.role === "typing" || m.role === "team"
-          ? ""
-          : titleOf(agent);
+  if (m.role === "agent" || m.role === "typing") {
+    // Its little face beside the reply: awake and friendly, or at work while it types.
+    who.classList.add("face");
+    who.dataset.face = agent;
+    if (m.role === "agent") who.dataset.mood = "smile";
+    who.setAttribute("aria-hidden", "true");
+  }
   const body = document.createElement("div");
   body.className = "body";
   if (m.text) body.append(...formatText(m.text));
@@ -438,6 +473,7 @@ async function refresh() {
   state.agents = agents.agents;
   state.approvals = approvals.approvals;
   state.usage = budget.usage;
+  state.limit = budget.limit ?? null;
   // The kill switch: paused holds every run; the button resumes.
   const pause = $("pause");
   pause.setAttribute("aria-pressed", String(Boolean(budget.paused)));
@@ -551,7 +587,7 @@ function alertLine(text) {
  */
 function iconPicker(grid, preview, agent, chosen, onPick) {
   preview.dataset.face = agent;
-  preview.dataset.mood = "idle";
+  preview.dataset.mood = "smile";
   if (chosen) preview.dataset.icon = chosen;
   else delete preview.dataset.icon;
   delete preview.dataset.drawn;
@@ -560,15 +596,17 @@ function iconPicker(grid, preview, agent, chosen, onPick) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "icon-choice";
-      b.title = icon;
-      b.setAttribute("aria-label", icon);
+      b.title = CRITTERS[icon].label;
+      b.setAttribute("aria-label", CRITTERS[icon].label);
       b.setAttribute("aria-pressed", String(icon === chosen));
       const face = document.createElement("span");
       face.className = "face";
       face.dataset.face = agent;
       face.dataset.icon = icon;
-      face.dataset.mood = "idle";
-      b.append(face);
+      face.dataset.mood = "smile";
+      const name = document.createElement("span");
+      name.textContent = CRITTERS[icon].label;
+      b.append(face, name);
       b.addEventListener("click", () => {
         for (const other of grid.children) other.setAttribute("aria-pressed", "false");
         b.setAttribute("aria-pressed", "true");
@@ -821,7 +859,7 @@ setInterval(() => {
 
 function setHub(up) {
   const el = $("hub-state");
-  el.textContent = up ? "hub connected" : "hub not running — start it with `crew start`";
+  el.textContent = up ? "Connected" : "Crew isn't running. Open it from the Crew icon.";
   el.classList.toggle("down", !up);
 }
 
@@ -1003,6 +1041,7 @@ function showFace(status) {
   const b = $("face-toggle");
   b.hidden = !status.installed;
   b.setAttribute("aria-pressed", String(Boolean(status.on)));
+  $("face-label").textContent = status.on ? "Face on" : "Face off";
   b.title = status.on
     ? "claude-face is on: click to turn it off"
     : "claude-face is off: click to turn it on";
@@ -1101,10 +1140,6 @@ async function start() {
     const n = Number(e.key);
     if (n >= 1 && n <= state.agents.length) select(state.agents[n - 1].id);
   });
-  setInterval(() => {
-    state.frame += 1;
-    paintFaces();
-  }, FRAME_MS);
 
   const remembered = localStorage.getItem("crew-agent");
   if (remembered) state.selected = remembered;
