@@ -547,6 +547,22 @@ button.sync[hidden] {
   font-style: italic;
 }
 
+/* agents talking to each other: a quiet line, not a bubble */
+.message.team-line {
+  align-self: center;
+  max-width: 88%;
+}
+
+.message.team-line .body {
+  background: transparent;
+  border: 1px dashed var(--edge);
+  border-radius: 14px;
+  padding: 5px 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
 .message.typing .body {
   background: transparent;
   border: none;

@@ -46,9 +46,19 @@ You start with four agents, each with a face and a job:
 | **Writer**   | Posts, emails, documents and scripts, in your voice                      |
 | **Builder**  | Hands-on work on the computer: code, files, automation, setting up tools |
 
-They **work side by side** (several at once, each on its own task), **pass work to each
-other** through their inboxes, and their faces show at a glance who is working (blue), who
-needs you (orange) and who is done (green).
+They **work side by side** (several at once, each on its own task), and their faces show at a
+glance who is working (blue), who needs you (orange) and who is done (green).
+
+### They talk to each other
+
+<img src="assets/readme/team-talk.png" alt="Writer checks with Research mid-task and uses the answer" width="900">
+
+- **Quick questions:** in the middle of a task, an agent can ask a teammate and wait for the
+  answer. Say "check with Research" and Writer does just that.
+- **Handoffs:** bigger work goes into a teammate's inbox. When they finish, the result goes
+  back to whoever asked, so the CEO can plan, hand out the work, and pull it together.
+- **You see it all:** every question, handoff and reply shows as a small line in both
+  agents' chats.
 
 ## Send them anything
 

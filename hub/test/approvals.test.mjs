@@ -444,8 +444,17 @@ test("the crew tool server turns an agent's tool call into a pending approval", 
     const { tools } = (await call(2, "tools/list", {})).result;
     assert.deepEqual(
       tools.map((t) => t.name),
-      ["request_approval"],
+      ["request_approval", "ask_teammate"],
     );
+    const ask = tools[1].description;
+    assert.match(ask, /ceo \(CEO\)/, "names the teammates");
+    assert.doesNotMatch(ask, /social \(/, "but not the agent itself");
+    const self = await call(5, "tools/call", {
+      name: "ask_teammate",
+      arguments: { agent: "social", question: "x" },
+    });
+    assert.equal(self.result.isError, true);
+    assert.match(self.result.content[0].text, /^Not asked: /);
 
     const ok = await call(3, "tools/call", {
       name: "request_approval",

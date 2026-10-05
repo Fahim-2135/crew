@@ -13,6 +13,7 @@ import {
   startOfLocalDay,
 } from "../src/core/schedule.mjs";
 import { inboxItem, wakePrompt, frontMatter } from "../src/core/inbox.mjs";
+import { askBlocked, requestSummary, teamLines } from "../src/core/teamtalk.mjs";
 import { buildReport } from "../src/core/report.mjs";
 import { resolveConfig, DEFAULT_CONFIG } from "../src/core/config.mjs";
 import { Store } from "../src/io/store.mjs";
@@ -80,6 +81,7 @@ test("inbox items: path, front matter, trust", () => {
     from: "mailroom",
     status: "open",
     trusted: false,
+    summary: "body",
   });
   assert.equal(inboxItem("departments/learning/inbox/links.md", "- [ ] x"), null);
   assert.equal(inboxItem("departments/ops/memory/2026-01-01-x.md", text), null);
@@ -394,4 +396,207 @@ test("budgetGuard false lifts the usage caps for work Crew starts itself", async
   assert.deepEqual(started, [job.id]);
   free.stop();
   store.close();
+});
+
+// --- agents talking to each other
+
+test("team talk: a request's summary, the lines both chats show, who may ask whom", () => {
+  assert.equal(
+    requestSummary("---\nfrom: ceo\n---\n\n# Find three rivals\nmore"),
+    "Find three rivals",
+  );
+  assert.equal(requestSummary("x".repeat(300)).length, 160);
+  const long = `${"word ".repeat(30)}**bold part** see [TBS News](https://tbsnews.net/a/very/long/path)`;
+  assert.equal(
+    teamLines("handoff", { fromTitle: "A", toTitle: "B", text: long }).forTo,
+    `← A asked: ${"word ".repeat(30)}**bold part** see…`,
+    "never cut inside a link",
+  );
+  assert.deepEqual(
+    teamLines("handoff", { fromTitle: "CEO", toTitle: "Ops", text: "check  AdMob" }),
+    {
+      forFrom: "→ Asked Ops: check AdMob",
+      forTo: "← CEO asked: check AdMob",
+    },
+  );
+  assert.equal(
+    teamLines("answer", { fromTitle: "CEO", toTitle: "Ops", text: "42" }).forFrom,
+    "← Ops answered: 42",
+  );
+  const team = ["ceo", "ops", "social"];
+  const p = { from: "ceo", to: "ops", askingJob: { kind: "chat" }, team, waiting: new Set() };
+  assert.equal(askBlocked(p), null);
+  assert.match(askBlocked({ ...p, to: "nobody" }), /no teammate/);
+  assert.match(askBlocked({ ...p, to: "ceo" }), /yourself/);
+  assert.match(askBlocked({ ...p, askingJob: { kind: "ask" } }), /answering/);
+  assert.match(
+    askBlocked({ ...p, waiting: new Set(["ops"]) }),
+    /waiting on a teammate/,
+    "no deadlock",
+  );
+});
+
+const teamText = (store, agent) =>
+  store
+    .messages(agent)
+    .filter((m) => m.role === "team")
+    .map((m) => m.text);
+
+test("a handoff shows in both chats, and its reply goes back to whoever asked", async () => {
+  const s = setup();
+  try {
+    s.hub.inboxTick();
+    writeFileSync(
+      join(s.brain, "departments", "ops", "inbox", "2026-10-04-ceo-admob.md"),
+      "---\nfrom: ceo\nto: ops\ncreated: 2026-10-04\nstatus: open\n---\nCheck the AdMob payout.",
+    );
+    s.hub.inboxTick();
+    assert.deepEqual(teamText(s.store, "ceo"), ["→ Asked Ops: Check the AdMob payout."]);
+    assert.deepEqual(teamText(s.store, "ops"), ["← CEO asked: Check the AdMob payout."]);
+    const [job] = s.store.jobsWithStatus("queued");
+    s.hub.start();
+    await finished(s.hub, job.id);
+    const [reply] = ["queued", "running", "done"]
+      .flatMap((st) => s.store.jobsWithStatus(st))
+      .filter((j) => j.kind === "reply");
+    assert.equal(reply.agent, "ceo");
+    assert.match(
+      reply.prompt,
+      /Ops finished the request you sent \(departments\/ops\/inbox\/2026-10-04-ceo-admob\.md\)/,
+    );
+    assert.match(teamText(s.store, "ceo")[1], /^← Ops replied: echo: /);
+    assert.equal(teamText(s.store, "ops")[1], "→ Replied to CEO");
+    await finished(s.hub, reply.id);
+    assert.equal(s.store.queuedJobs().length, 0, "a reply doesn't start another reply");
+  } finally {
+    await s.close();
+  }
+});
+
+test("a back-and-forth stops waking the asker after a few rounds an hour", async () => {
+  const s = setup();
+  try {
+    s.hub.inboxTick();
+    s.store.set("replies:ceo:ops", Array(6).fill(s.clock.now - 60_000));
+    s.writeItem("ops", "2026-10-04-ceo-again.md", "ceo");
+    s.hub.inboxTick();
+    const [job] = s.store.jobsWithStatus("queued");
+    s.hub.start();
+    await finished(s.hub, job.id);
+    assert.equal(queuedOf(s.store, "reply").length, 0, "held");
+    assert.match(teamText(s.store, "ceo").at(-1), /^← Ops replied: /, "the line still shows");
+    assert.ok(s.store.eventsSince(0).some((e) => e.type === "team.reply_held"));
+
+    s.clock.now += 60 * 60_000; // an hour later the pair may talk again
+    s.store.set("usage", { fiveHour: 0.1, sevenDay: 0.1, at: s.clock.now });
+    s.writeItem("ops", "2026-10-04-ceo-later.md", "ceo");
+    s.hub.inboxTick();
+    const later = s.store.jobsWithStatus("queued").find((j) => j.kind === "inbox");
+    await finished(s.hub, later.id);
+    const replies = ["queued", "running", "done"]
+      .flatMap((st) => s.store.jobsWithStatus(st))
+      .filter((j) => j.kind === "reply");
+    assert.equal(replies.length, 1);
+  } finally {
+    await s.close();
+  }
+});
+
+test("an item from the user or the mailroom is no handoff: nobody gets a reply", async () => {
+  const s = setup();
+  try {
+    s.hub.inboxTick();
+    s.writeItem("ops", "2026-10-04-user-x.md", "user");
+    s.hub.inboxTick();
+    const [job] = s.store.jobsWithStatus("queued");
+    s.hub.start();
+    await finished(s.hub, job.id);
+    assert.equal(queuedOf(s.store, "reply").length, 0);
+    assert.deepEqual(teamText(s.store, "ops"), []);
+  } finally {
+    await s.close();
+  }
+});
+
+function started(hub, jobId) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (hub.job(jobId).status !== "queued") {
+        hub.off("event", check);
+        resolve(hub.job(jobId));
+      }
+    };
+    hub.on("event", check);
+    check();
+  });
+}
+
+test("ask_teammate: the teammate answers at once and the asker hears it; no loops", async () => {
+  const s = setup();
+  try {
+    s.hub.start();
+    const asking = s.hub.enqueue({
+      agent: "ceo",
+      kind: "chat",
+      priority: PRIORITY.user,
+      prompt: "SLEEP",
+    });
+    await started(s.hub, asking.id);
+    assert.throws(
+      () => s.hub.ask({ jobId: 999, agent: "ops", question: "x" }),
+      /only a run in progress/,
+    );
+    assert.throws(() => s.hub.ask({ jobId: asking.id, agent: "ceo", question: "x" }), /yourself/);
+    assert.throws(() => s.hub.ask({ jobId: asking.id, agent: "ops", question: " " }), /say what/);
+
+    const { job } = s.hub.ask({ jobId: asking.id, agent: "Ops", question: "What did AdMob pay?" });
+    assert.equal(job.kind, "ask");
+    assert.equal(job.agent, "ops");
+    assert.match(job.prompt, /CEO is in the middle of a task/);
+    assert.deepEqual(teamText(s.store, "ceo"), ["→ Asked Ops, waiting: What did AdMob pay?"]);
+    const answered = await finished(s.hub, job.id);
+    assert.equal(answered.status, "done");
+    assert.match(answered.result, /^echo: /);
+    assert.match(teamText(s.store, "ceo").at(-1), /^← Ops answered: echo: /);
+    assert.equal(teamText(s.store, "ops").at(-1), "→ Answered CEO");
+    assert.equal(s.hub.asks.size, 0);
+    s.hub.cancel(asking.id);
+  } finally {
+    await s.close();
+  }
+});
+
+test("ask_teammate: two agents can't wait on each other, and a finished asker drops its question", async () => {
+  const s = setup();
+  try {
+    s.hub.start();
+    const ceo = s.hub.enqueue({
+      agent: "ceo",
+      kind: "chat",
+      priority: PRIORITY.user,
+      prompt: "SLEEP",
+    });
+    const ops = s.hub.enqueue({
+      agent: "ops",
+      kind: "chat",
+      priority: PRIORITY.user,
+      prompt: "SLEEP",
+    });
+    await started(s.hub, ceo.id);
+    await started(s.hub, ops.id);
+    // Ops is busy, so the question waits in the queue.
+    const { job } = s.hub.ask({ jobId: ceo.id, agent: "ops", question: "x" });
+    assert.equal(s.hub.job(job.id).status, "queued");
+    assert.throws(
+      () => s.hub.ask({ jobId: ops.id, agent: "ceo", question: "y" }),
+      /waiting on a teammate/,
+    );
+    s.hub.cancel(ceo.id);
+    await finished(s.hub, ceo.id);
+    assert.equal(s.hub.job(job.id).status, "cancelled", "nobody is waiting for it any more");
+    assert.equal(s.hub.asks.size, 0);
+    s.hub.cancel(ops.id);
+  } finally {
+    await s.close();
+  }
 });

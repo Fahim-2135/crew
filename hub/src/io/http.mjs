@@ -218,6 +218,14 @@ export function createApi(hub, options) {
         return { ok: true };
       },
     ],
+    [
+      "POST",
+      /^\/v1\/ask$/,
+      async (req, _m, _url, auth) => {
+        localOnly(auth); // an agent's run on this PC asks a teammate
+        return hub.ask(await readJson(req));
+      },
+    ],
     ["GET", /^\/v1\/face$/, () => hub.faceStatus()],
     [
       "POST",

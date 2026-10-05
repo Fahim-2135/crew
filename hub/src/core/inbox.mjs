@@ -6,8 +6,9 @@
 // fenced in the prompt as data, not instructions.
 
 import { owner } from "./owner.mjs";
+import { requestSummary } from "./teamtalk.mjs";
 
-const ITEM_PATH = /^departments\/([a-z]+)\/inbox\/(\d{4}-\d{2}-\d{2}-[^/]+\.md)$/;
+const ITEM_PATH = /^departments\/([a-z][a-z0-9]*)\/inbox\/(\d{4}-\d{2}-\d{2}-[^/]+\.md)$/;
 const UNTRUSTED_SOURCES = new Set(["mailroom"]);
 
 /** Flat `key: value` front matter. */
@@ -40,6 +41,7 @@ export function inboxItem(relPath, text) {
     from,
     status: (fields.status ?? "open").toLowerCase(),
     trusted: !UNTRUSTED_SOURCES.has(from),
+    summary: requestSummary(text),
   };
 }
 

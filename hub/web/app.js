@@ -237,7 +237,7 @@ function renderThread() {
 
 function messageItem(agent, m) {
   const li = document.createElement("li");
-  li.className = `message ${m.role === "you" ? "you" : m.role}`;
+  li.className = `message ${m.role === "team" ? "team-line" : m.role}`;
   const who = document.createElement("div");
   who.className = "who";
   who.textContent =
@@ -245,7 +245,7 @@ function messageItem(agent, m) {
       ? "you"
       : m.role === "note"
         ? "crew"
-        : m.role === "typing"
+        : m.role === "typing" || m.role === "team"
           ? ""
           : titleOf(agent);
   const body = document.createElement("div");

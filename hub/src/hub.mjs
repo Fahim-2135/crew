@@ -27,6 +27,7 @@ import { inspectCommand } from "./core/safety.mjs";
 import { pushFor } from "./core/push.mjs";
 import { terminalTurns } from "./core/transcript.mjs";
 import { MAX_PER_MESSAGE, attachmentNote, kindOf } from "./core/attachments.mjs";
+import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./core/teamtalk.mjs";
 import { ICON_NAMES } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -109,6 +110,8 @@ export class Hub extends EventEmitter {
      * @type {Map<number, { agent: string, kind: string, kill: () => void }>}
      */
     this.running = new Map();
+    /** Questions in flight (ask_teammate): ask job id -> { from, fromJob, to }. */
+    this.asks = new Map();
     /** Their promises, so shutdown can wait for every one to record how it ended. */
     this.current = new Set();
     this.stopped = false;
@@ -705,6 +708,7 @@ export class Hub extends EventEmitter {
     if (!job) throw new HubError(404, "no such job");
     if (job.status === "queued") {
       this.store.updateJob(jobId, { status: "cancelled", endedAt: this.now() });
+      this.asks.delete(jobId);
       this.event("job.cancelled", { jobId, agent: job.agent });
     } else if (job.status === "running" && this.running.has(job.id)) {
       this.cancelling.add(job.id);
@@ -1008,13 +1012,22 @@ export class Hub extends EventEmitter {
       if (seen[item.path]) continue;
       seen[item.path] = this.now();
       if (baseline || !isOpen(item)) continue;
-      this.enqueue({
+      const job = this.enqueue({
         agent: item.dept,
         kind: "inbox",
         priority: PRIORITY.urgent,
         prompt: wakePrompt(item),
         tainted: !item.trusted,
       });
+      // A handoff from a teammate: both chats show it, and the reply goes back when it's done.
+      if (item.from !== item.dept && this.team().includes(item.from)) {
+        this.store.set(`handoff:${job.id}`, {
+          from: item.from,
+          path: item.path,
+          summary: item.summary,
+        });
+        this.teamLine("handoff", item.from, item.dept, item.summary || item.path);
+      }
       this.event("inbox.woke", { agent: item.dept, path: item.path, trusted: item.trusted });
       woke += 1;
     }
@@ -1070,7 +1083,9 @@ export class Hub extends EventEmitter {
 
     for (const job of this.store.queuedJobs()) {
       if (busy.has(job.agent)) continue;
-      if (this.running.size >= (job.kind === "call" ? max + 1 : max)) continue;
+      // A call, and a teammate's answer someone is waiting on, may take one slot past the limit.
+      const spare = job.kind === "call" || job.kind === "ask";
+      if (this.running.size >= (spare ? max + 1 : max)) continue;
       const autonomous = job.priority !== PRIORITY.user;
       if (autonomous && (quiet || capped)) {
         deferred = true;
@@ -1354,6 +1369,7 @@ export class Hub extends EventEmitter {
   finish(job, status, fields) {
     this.store.updateJob(job.id, { status, endedAt: this.now(), ...fields });
     this.memorySyncFinished(job, status);
+    this.teamFinished(job, status, fields);
     if (status !== "done" && this.team().includes(job.agent)) {
       const text = status === "cancelled" ? "Stopped." : `Couldn't finish: ${fields.error}`;
       this.store.addMessage({
@@ -1365,6 +1381,95 @@ export class Hub extends EventEmitter {
       });
     }
     this.event(`job.${status}`, { jobId: job.id, agent: job.agent, error: fields.error ?? null });
+  }
+
+  // --- agents talking to each other (core/teamtalk.mjs)
+
+  /** A line in both agents' chats: a handoff, a question, a reply or an answer. */
+  teamLine(kind, from, to, text) {
+    const lines = teamLines(kind, {
+      fromTitle: this.titleOf(from),
+      toTitle: this.titleOf(to),
+      text,
+    });
+    const at = this.now();
+    this.store.addMessage({ agent: from, role: "team", text: lines.forFrom, at });
+    this.store.addMessage({ agent: to, role: "team", text: lines.forTo, at });
+    this.event("team.talk", { kind, from, to, agent: from });
+    this.event("team.talk", { kind, from, to, agent: to });
+  }
+
+  /**
+   * An agent asks a teammate mid-task (ask_teammate). The teammate runs at once, on a spare
+   * slot if need be; the asking run waits for the answer (mcp-crew.mjs polls the job).
+   * @param {{ jobId: number, agent: string, question: string }} input
+   */
+  ask(input) {
+    const asking = this.store.job(Number(input.jobId));
+    if (!asking || asking.status !== "running") {
+      throw new HubError(403, "only a run in progress can ask a teammate");
+    }
+    const to = String(input.agent ?? "")
+      .trim()
+      .toLowerCase();
+    const question = String(input.question ?? "").trim();
+    if (!question) throw new HubError(400, "say what you want to ask");
+    const waiting = new Set([...this.asks.values()].map((a) => a.from));
+    const why = askBlocked({
+      from: asking.agent,
+      to,
+      askingJob: asking,
+      team: this.team(),
+      waiting,
+    });
+    if (why) throw new HubError(409, why);
+    const job = this.enqueue({
+      agent: to,
+      kind: "ask",
+      priority: PRIORITY.user,
+      prompt: askPrompt({ fromTitle: this.titleOf(asking.agent), question }),
+      tainted: Boolean(asking.tainted),
+    });
+    this.asks.set(job.id, { from: asking.agent, fromJob: asking.id, to });
+    this.teamLine("ask", asking.agent, to, question);
+    return { job: this.job(job.id) };
+  }
+
+  /** When a handoff or a question is done, the one who asked hears back. */
+  teamFinished(job, status, fields) {
+    // Nobody is waiting any more for questions this run asked and that haven't started.
+    for (const [askId, a] of this.asks) {
+      if (a.fromJob === job.id && this.store.job(askId)?.status === "queued") this.cancel(askId);
+    }
+    const ask = this.asks.get(job.id);
+    if (ask) {
+      this.asks.delete(job.id);
+      if (status === "done") this.teamLine("answer", ask.from, ask.to, fields.result ?? "");
+    }
+    const handoff = job.kind === "inbox" ? this.store.get(`handoff:${job.id}`) : null;
+    if (handoff && status === "done" && this.team().includes(handoff.from)) {
+      this.teamLine("reply", handoff.from, job.agent, fields.result ?? "");
+      // Two agents handing work back and forth stop waking each other after a few rounds.
+      const key = `replies:${[handoff.from, job.agent].sort().join(":")}`;
+      const now = this.now();
+      const recent = this.store.get(key, []).filter((t) => now - t < REPLY_LIMIT.perMs);
+      if (recent.length >= REPLY_LIMIT.count) {
+        this.event("team.reply_held", { from: job.agent, to: handoff.from, agent: handoff.from });
+        return;
+      }
+      this.store.set(key, [...recent, now]);
+      this.enqueue({
+        agent: handoff.from,
+        kind: "reply",
+        priority: PRIORITY.urgent,
+        prompt: replyPrompt({
+          byTitle: this.titleOf(job.agent),
+          path: handoff.path,
+          result: fields.result,
+        }),
+        tainted: Boolean(job.tainted),
+      });
+    }
   }
 
   event(type, data) {
