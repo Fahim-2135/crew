@@ -502,6 +502,43 @@ test("a back-and-forth stops waking the asker after a few rounds an hour", async
   }
 });
 
+test("agents created later talk like the rest: handoffs, replies and questions", async () => {
+  const s = setup();
+  try {
+    // An agent the user made through Crew: its definition, its inbox, its place on the team.
+    writeFileSync(join(s.root, "agents", "baker.md"), AGENT_MD("baker"));
+    mkdirSync(join(s.brain, "departments", "baker", "inbox"), { recursive: true });
+    s.store.set("team:custom", [{ id: "baker", title: "Pastry Chef", createdAt: s.clock.now }]);
+
+    s.hub.inboxTick();
+    writeFileSync(
+      join(s.brain, "departments", "baker", "inbox", "2026-10-04-ceo-menu.md"),
+      "---\nfrom: ceo\nto: baker\ncreated: 2026-10-04\nstatus: open\n---\nDraft the brunch menu.",
+    );
+    assert.equal(s.hub.inboxTick(), 1, "the new agent's inbox is watched");
+    assert.deepEqual(teamText(s.store, "baker"), ["← CEO asked: Draft the brunch menu."]);
+    const job = s.store.jobsWithStatus("queued").find((j) => j.agent === "baker");
+    s.hub.start();
+    await finished(s.hub, job.id);
+    assert.equal(teamText(s.store, "ceo").at(-1).startsWith("← Pastry Chef replied: "), true);
+
+    // And it can ask an old teammate, and be asked.
+    const asking = s.hub.enqueue({
+      agent: "baker",
+      kind: "chat",
+      priority: PRIORITY.user,
+      prompt: "SLEEP",
+    });
+    await started(s.hub, asking.id);
+    const { job: q } = s.hub.ask({ jobId: asking.id, agent: "ops", question: "Oven hours?" });
+    assert.equal((await finished(s.hub, q.id)).status, "done");
+    assert.match(teamText(s.store, "baker").at(-1), /^← Ops answered: /);
+    s.hub.cancel(asking.id);
+  } finally {
+    await s.close();
+  }
+});
+
 test("an item from the user or the mailroom is no handoff: nobody gets a reply", async () => {
   const s = setup();
   try {
