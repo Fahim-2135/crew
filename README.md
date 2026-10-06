@@ -109,20 +109,22 @@ The request appears at the top of the chat and under **Needs you**, and a notifi
 
 <table>
 <tr>
-<td width="50%"><img src="assets/readme/new-agent.png" alt="New agent: a name, an icon and a one-line description" width="100%"></td>
+<td width="50%"><img src="assets/readme/new-agent.png" alt="New agent: a name, a face and a one-line description" width="100%"></td>
 <td width="50%"><img src="assets/readme/agent-draft.png" alt="The CEO's draft of the new agent, waiting for approval" width="100%"></td>
 </tr>
 </table>
 
-Click **New agent**, give it a name, an icon and a sentence about what it should do. The CEO
+Click **+** at the top of the Crew window, give the new agent a name, a face and a sentence
+about what it should do. The CEO
 drafts its role and rules, and nothing is created until you approve the draft. The new agent
 joins the team straight away.
 
 ## Make it yours
 
-<img src="assets/readme/profile.png" alt="Agent profile: rename an agent or pick one of 25 icons" width="900">
+<img src="assets/readme/profile.png" alt="Agent profile: rename an agent or pick one of 25 faces" width="900">
 
-Rename any agent and pick one of 25 icons. The agent is told its new name.
+Click an agent's name at the top of its chat to rename it or give it a different face, out of 25
+little characters. The agent is told its new name, and claude-face shows the new face too.
 
 ## A memory that grows with you
 
@@ -138,7 +140,9 @@ down on a reply makes the agent review how it works.
 A little crew that floats on your screen and shows what your agents are doing, so you don't
 have to keep checking the window. The agent that matters most steps forward, wearing its own
 face and name: one that needs you, then one that has just finished, then one at work. The others
-wait small in the corners. Click it to jump to that agent in Crew. Minimised, it's a small round
+wait small in the corners, and the whole badge takes the colour of what is happening: pale blue
+while one works, pale green when done, and an orange that slowly deepens when one needs you.
+Click it to jump to that agent in Crew. Minimised, it's a small round
 badge with just that face. `/crew:setup` offers to install it; turn it on or off with the
 **Face** switch at the top of the Crew window.
 
