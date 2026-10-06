@@ -43,5 +43,6 @@ const answer = await askOwner({
   summary: gate.summary,
   reason: gate.reason,
   grant: gate.grant,
+  face: { session_id: call.session_id, cwd: call.cwd, transcript: call.transcript_path },
 });
 decide(answer.allow ? "allow" : "deny", answer.reason);
