@@ -551,6 +551,11 @@ button.now {
   cursor: pointer;
 }
 
+button.now.armed {
+  background: var(--accent);
+  color: #fff;
+}
+
 button.now[hidden] {
   display: none;
 }

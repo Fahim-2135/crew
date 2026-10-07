@@ -263,9 +263,13 @@ function renderThread() {
   // Rebuild only when something changed: a rebuild restarts the faces' motion.
   const working = me.state === "working";
   $("send-now").hidden = !working;
-  $("input").placeholder = working
-    ? `Message… waits until ${titleOf(agent)} finishes (Alt+Enter: tell it now)`
-    : "Message…";
+  if (!working) state.nowArmed = false;
+  $("send-now").classList.toggle("armed", Boolean(state.nowArmed));
+  $("input").placeholder = !working
+    ? "Message…"
+    : state.nowArmed
+      ? `Tell ${titleOf(agent)} now: it reads this after the step it's on…`
+      : `Message… waits until ${titleOf(agent)} finishes (Alt+Enter: tell it now)`;
   const key = JSON.stringify([agent, msgs.length, last?.id, last?.text, working, me.progress]);
   if (list.dataset.key !== key) {
     list.dataset.key = key;
@@ -518,7 +522,15 @@ async function sendNow() {
   const input = $("input");
   const text = input.value.trim();
   const agent = state.selected;
-  if (!text || !agent || state.sending) return;
+  // Pressed on an empty box: the next message goes as a note (press again, or Esc, to undo).
+  if (!text) {
+    state.nowArmed = !state.nowArmed;
+    renderThread();
+    input.focus();
+    return;
+  }
+  state.nowArmed = false;
+  if (!agent || state.sending) return;
   state.sending = true;
   $("send-now").disabled = true;
   try {
@@ -1440,9 +1452,15 @@ async function start() {
       sendNow().catch(() => {});
       return;
     }
+    if (e.key === "Escape" && state.nowArmed) {
+      state.nowArmed = false;
+      renderThread();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      $("composer").requestSubmit();
+      if (state.nowArmed) sendNow().catch(() => {});
+      else $("composer").requestSubmit();
     }
   });
   document.addEventListener("keydown", (e) => {
