@@ -318,6 +318,8 @@ async function supervise() {
     });
     const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)));
     if (stopping || code === 0) return;
+    // 75: the hub asked to restart on new code (`crew setup`, /v1/restart). Not a crash.
+    if (code === 75) continue;
     const now = Date.now();
     crashes.push(now);
     while (crashes.length && now - crashes[0] > 10 * 60_000) crashes.shift();
