@@ -621,6 +621,101 @@ function iconPicker(grid, preview, agent, chosen, onPick) {
   paintFaces();
 }
 
+// ---- skills: what the agent has learned (core/skills.mjs) and how its week went
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function stat(value, label, before) {
+  const box = el("div", "stat");
+  box.append(el("b", null, value), el("span", null, label));
+  if (before != null) box.append(el("small", null, before));
+  return box;
+}
+
+const pct = (x) => (x == null ? "–" : `${Math.round(x * 100)}%`);
+
+async function openSkills() {
+  const agent = state.selected;
+  if (!agent) return;
+  $("skills-title").textContent = `${titleOf(agent)}'s skills`;
+  $("skills-lead").textContent = "Loading…";
+  $("skills-score").replaceChildren();
+  $("skills-trend").textContent = "";
+  $("skills-list").replaceChildren();
+  $("skills").showModal();
+  let data;
+  try {
+    data = await api(`/v1/agents/${agent}/skills`);
+  } catch (err) {
+    $("skills-lead").textContent = err.message;
+    return;
+  }
+  const { skills, score } = data;
+  const w = score.week;
+  const b = score.before;
+  $("skills-lead").textContent =
+    "Work it does twice becomes a skill, and every run improves it. Last 7 days, with the 7 before:";
+  $("skills-score").replaceChildren(
+    stat(String(w.realTasks), "real tasks", `before: ${b.realTasks}`),
+    stat(pct(w.skillShare), "done with a skill", `before: ${pct(b.skillShare)}`),
+    stat(String(w.corrections), "corrections", `before: ${b.corrections}`),
+    stat(String(score.skills.skills), "skills", `improved ${score.skills.improvements}×`),
+  );
+  const t =
+    w.correctionsPerTask == null || b.correctionsPerTask == null
+      ? null
+      : w.correctionsPerTask < b.correctionsPerTask
+        ? "better"
+        : w.correctionsPerTask > b.correctionsPerTask
+          ? "worse"
+          : "same";
+  const trendText = {
+    better: "Fewer corrections per task than the week before.",
+    worse: "More corrections per task than the week before.",
+    same: "About the same as the week before.",
+  };
+  $("skills-trend").className = `score-trend ${t ?? ""}`;
+  $("skills-trend").textContent = t
+    ? `${trendText[t]} Corrections are thumbs down, quick OKs you said no to, and failed runs.`
+    : "Corrections are thumbs down, quick OKs you said no to, and failed runs.";
+
+  if (!skills.length) {
+    $("skills-list").append(
+      el(
+        "li",
+        "faint",
+        "No skills yet. After its next real task it writes down how it did it; the second time, that becomes a skill.",
+      ),
+    );
+    return;
+  }
+  for (const k of skills) {
+    const item = el("li", "skill");
+    const head = el("div", "skill-head");
+    head.append(
+      el("span", "skill-name", k.name),
+      el(
+        "span",
+        `skill-chip ${k.stage}`,
+        k.stage === "skill" ? `v${k.version}` : k.playbook ? "playbook" : "written down once",
+      ),
+    );
+    item.append(head);
+    if (k.description) item.append(el("p", "skill-desc", k.description));
+    if (k.changes?.length) {
+      const list = el("ul", "skill-changes");
+      for (const c of k.changes) list.append(el("li", null, c));
+      item.append(list);
+    }
+    $("skills-list").append(item);
+  }
+}
+
 // ---- agent profile: rename, change icon
 
 const profile = { agent: null, icon: null };
@@ -1078,6 +1173,8 @@ async function start() {
   $("new-agent-form").addEventListener("submit", (e) => askForAgent(e).catch(() => {}));
   $("new-agent-close").addEventListener("click", () => $("new-agent").close());
   $("profile-open").addEventListener("click", openProfile);
+  $("skills-open").addEventListener("click", () => openSkills().catch(() => {}));
+  $("skills-close").addEventListener("click", () => $("skills").close());
   $("profile-form").addEventListener("submit", (e) => saveProfile(e).catch(() => {}));
   $("profile-close").addEventListener("click", () => $("profile").close());
   $("profile-cancel").addEventListener("click", () => $("profile").close());

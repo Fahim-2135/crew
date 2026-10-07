@@ -102,6 +102,14 @@
             <button
               type="button"
               class="ghost"
+              id="skills-open"
+              title="What this agent has learned: its skills, and how its week went"
+            >
+              Skills
+            </button>
+            <button
+              type="button"
+              class="ghost"
               id="terminal"
               title="Continue this conversation in Claude Code, in a terminal (Crew waits while it is open)"
             >
@@ -165,6 +173,21 @@
           <button type="submit" class="primary" id="profile-save">Save</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="sheet" id="skills" aria-labelledby="skills-title">
+      <header class="sheet-head">
+        <h2 id="skills-title">Skills</h2>
+        <button type="button" class="icon-btn" id="skills-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </header>
+      <div class="sheet-body">
+        <p class="faint" id="skills-lead"></p>
+        <div class="score" id="skills-score"></div>
+        <p class="score-trend" id="skills-trend"></p>
+        <ul class="skill-list" id="skills-list"></ul>
+      </div>
     </dialog>
 
     <dialog class="sheet" id="new-agent" aria-labelledby="new-agent-title">

@@ -349,6 +349,11 @@ export function createApi(hub, options) {
     ],
     [
       "GET",
+      /^\/v1\/agents\/([a-z0-9-]+)\/skills$/,
+      (_req, m) => ({ skills: hub.skillsOf(m[1]), score: hub.score(m[1]) }),
+    ],
+    [
+      "GET",
       /^\/v1\/events\/poll$/,
       (_req, _m, url) =>
         pollEvents(

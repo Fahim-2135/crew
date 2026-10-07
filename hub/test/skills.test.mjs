@@ -19,6 +19,7 @@ import {
   skillEntry,
   skillsNote,
 } from "../src/core/skills.mjs";
+import { scorecard, scoreLine, trend, retroPrompt, DAY_MS } from "../src/core/scorecard.mjs";
 
 const FAKE = fileURLToPath(new URL("./fake-claude.mjs", import.meta.url));
 
@@ -119,7 +120,7 @@ test("only real work is reviewed, and the review says how to save or improve the
 });
 
 /** A hub over a temp brain, running the fake Claude as a real process. */
-function setup() {
+function setup(extra = {}) {
   const root = mkdtempSync(join(tmpdir(), "crew-skills-"));
   const brain = join(root, "brain");
   const agentsDir = join(root, "agents");
@@ -141,6 +142,7 @@ function setup() {
     sessions: () => [],
     killTree,
     afterWrite: () => {},
+    ...extra,
   });
   return { root, brain, store, hub };
 }
@@ -203,4 +205,124 @@ test("a review that saved nothing leaves the chat alone", () => {
   assert.equal(savedNothing("Nothing to save."), true);
   assert.equal(savedNothing("  nothing to save  "), true);
   assert.equal(savedNothing('Saved demo-video v4 (was: "nothing to save" before)'), false);
+});
+
+test("the score compares this week with the week before", () => {
+  const now = 100 * DAY_MS;
+  const day = (n) => now - n * DAY_MS;
+  const job = (kind, at, extra = {}) => ({ kind, createdAt: at, status: "done", ...extra });
+  const card = scorecard({
+    now,
+    jobs: [
+      // this week: 2 real tasks, one done with a skill, one failed run
+      job("chat", day(1), { result: "Using skill: demo-video (v3)\nDone." }),
+      job("review", day(1)),
+      job("chat", day(2), { result: "Done." }),
+      job("review", day(2)),
+      job("chat", day(3), { status: "failed" }),
+      // the week before: 1 real task, 2 thumbs down
+      job("chat", day(9), { result: "Done." }),
+      job("review", day(9)),
+    ],
+    feedback: [
+      { rating: "down", at: day(8) },
+      { rating: "down", at: day(10) },
+      { rating: "up", at: day(1) },
+    ],
+    approvals: [
+      { status: "denied", createdAt: day(2) },
+      { status: "approved", createdAt: day(2) },
+    ],
+    skills: [
+      { stage: "skill", version: 3 },
+      { stage: "skill", version: 1 },
+      { stage: "record", version: 0 },
+    ],
+  });
+  assert.equal(card.week.realTasks, 2);
+  assert.equal(card.week.withSkill, 1);
+  assert.equal(card.week.skillShare, 0.5);
+  assert.equal(card.week.corrections, 2, "one said no, one failed");
+  assert.equal(card.before.corrections, 2, "two thumbs down");
+  assert.equal(card.week.correctionsPerTask, 1);
+  assert.equal(card.before.correctionsPerTask, 2);
+  assert.equal(trend(card), "better");
+  assert.deepEqual(card.skills, { skills: 2, records: 1, improvements: 2 });
+  assert.match(scoreLine(card), /2 real tasks in 7 days; 50% done with a skill/);
+  const prompt = retroPrompt({
+    agent: "social",
+    brain: "C:\\brain",
+    today: "2026-10-11",
+    owner: "Fahim",
+    card,
+    corrections: ["Said no to: Post the draft (too long)"],
+  });
+  assert.match(prompt, /Said no to: Post the draft \(too long\)/);
+  assert.match(prompt, /C:\/brain\/departments\/social\/skills/);
+  assert.match(prompt, /agent\.update/);
+});
+
+test("on the look-back day each agent that did real work gets one look-back, once", () => {
+  // Sunday 2026-10-11, 10:30 in UTC+6.
+  const now = Date.UTC(2026, 9, 11, 4, 30);
+  const { root, brain, store, hub } = setup({ now: () => now, utcOffsetMinutes: () => 360 });
+  try {
+    for (const kind of ["chat", "review"]) {
+      const j = store.addJob({
+        agent: "social",
+        kind,
+        priority: 0,
+        prompt: "video",
+        createdAt: now - DAY_MS,
+      });
+      store.updateJob(j.id, { status: "done", endedAt: now - DAY_MS });
+    }
+    const dir = join(brain, "departments", "social", "skills", "demo-video");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: demo-video\nstage: skill\nversion: 2\n---\n");
+    writeFileSync(join(dir, "CHANGELOG.md"), "2026-10-07 v1: first\n2026-10-08 v2: zoom timing\n");
+
+    hub.retroTick();
+    hub.retroTick();
+    const retros = store.queuedJobs().filter((j) => j.kind === "retro");
+    assert.deepEqual(
+      retros.map((j) => j.agent),
+      ["social"],
+      "only the agent that worked, once",
+    );
+    assert.match(retros[0].prompt, /1 real task in 7 days/);
+
+    const skills = hub.skillsOf("social");
+    assert.equal(skills[0].name, "demo-video");
+    assert.deepEqual(skills[0].changes, ["2026-10-08 v2: zoom timing", "2026-10-07 v1: first"]);
+    assert.equal(hub.score("social").skills.improvements, 1);
+  } finally {
+    hub.stop();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("not on other days or before the hour", () => {
+  const monday = Date.UTC(2026, 9, 12, 4, 30);
+  const early = Date.UTC(2026, 9, 11, 2, 0); // Sunday 08:00 local
+  for (const now of [monday, early]) {
+    const { root, store, hub } = setup({ now: () => now, utcOffsetMinutes: () => 360 });
+    try {
+      const j = store.addJob({
+        agent: "social",
+        kind: "review",
+        priority: 0,
+        prompt: "x",
+        createdAt: now - 1000,
+      });
+      store.updateJob(j.id, { status: "done" });
+      hub.retroTick();
+      assert.equal(store.queuedJobs().filter((q) => q.kind === "retro").length, 0);
+    } finally {
+      hub.stop();
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
 });

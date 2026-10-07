@@ -64,7 +64,8 @@ export function skillEntry({ owner, path, text, playbook = false }) {
     owner,
     path,
     name,
-    description: f.description || firstLine || "",
+    // Brain links ([[note-id]]) read as plain words.
+    description: (f.description || firstLine || "").replace(/\[\[([^\]]+)\]\]/g, "$1"),
     stage: playbook ? "record" : f.stage === "record" ? "record" : "skill",
     version: playbook ? 0 : Number(f.version) || (f.stage === "record" ? 0 : 1),
     playbook,

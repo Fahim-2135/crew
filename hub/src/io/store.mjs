@@ -235,6 +235,14 @@ export class Store {
     return this.db.prepare("SELECT * FROM jobs WHERE status = ?").all(status).map(camel);
   }
 
+  /** An agent's jobs created since `since` (epoch ms), oldest first. */
+  agentJobsSince(agent, since) {
+    return this.db
+      .prepare("SELECT * FROM jobs WHERE agent = ? AND created_at >= ? ORDER BY id")
+      .all(agent, since)
+      .map(camel);
+  }
+
   latestJob(agent) {
     return camel(this.db.prepare("SELECT * FROM jobs WHERE agent = ? ORDER BY id DESC").get(agent));
   }
@@ -307,6 +315,14 @@ export class Store {
     return Number(lastInsertRowid);
   }
 
+  /** Events of one type since `since` (epoch ms), oldest first. */
+  eventsOfType(type, since) {
+    return this.db
+      .prepare("SELECT * FROM events WHERE type = ? AND at >= ? ORDER BY seq")
+      .all(type, since)
+      .map((row) => ({ seq: row.seq, at: row.at, type: row.type, data: JSON.parse(row.data) }));
+  }
+
   lastSeq() {
     return this.db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM events").get().seq;
   }
@@ -360,6 +376,14 @@ export class Store {
           .all(status, limit)
       : this.db.prepare("SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?").all(limit);
     return rows.map(parseApproval);
+  }
+
+  /** An agent's approvals created since `since` (epoch ms). */
+  agentApprovalsSince(agent, since) {
+    return this.db
+      .prepare("SELECT * FROM approvals WHERE agent = ? AND created_at >= ? ORDER BY created_at")
+      .all(agent, since)
+      .map(parseApproval);
   }
 
   updateApproval(id, fields) {

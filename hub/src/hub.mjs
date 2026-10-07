@@ -30,6 +30,7 @@ import { MAX_PER_MESSAGE, attachmentNote, kindOf } from "./core/attachments.mjs"
 import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./core/teamtalk.mjs";
 import { GRANTS } from "./core/gate.mjs";
 import { needsReview, reviewPrompt, savedNothing, skillEntry, skillsNote } from "./core/skills.mjs";
+import { DAY_MS, retroPrompt, scorecard } from "./core/scorecard.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -419,7 +420,7 @@ export class Hub extends EventEmitter {
     };
     const key = "feedback:" + agent;
     this.store.set(key, [...this.store.get(key, []), item].slice(-20));
-    this.event("feedback", { agent, rating });
+    this.event("feedback", { agent, rating, note: note || null, reply: item.reply });
     let review = null;
     if (rating === "down") {
       const pending = this.store
@@ -467,6 +468,100 @@ export class Hub extends EventEmitter {
       }
     }
     return entries;
+  }
+
+  /** One agent's own skills and records, newest change first, with their latest changelog lines. */
+  skillsOf(agent) {
+    this.assertAgent(agent);
+    return this.skills()
+      .filter((e) => e.owner === agent)
+      .map((e) => {
+        let changes = [];
+        if (!e.playbook) {
+          try {
+            const log = readFileSync(e.path.replace(/SKILL\.md$/, "CHANGELOG.md"), "utf8");
+            changes = log
+              .split(/\r?\n/)
+              .map((l) => l.replace(/^[-*]\s*/, "").trim())
+              .filter((l) => /^\d{4}-\d{2}-\d{2}/.test(l))
+              .slice(-3)
+              .reverse();
+          } catch {
+            /* no changelog yet */
+          }
+        }
+        return { ...e, changes };
+      })
+      .sort((a, b) => b.version - a.version || a.name.localeCompare(b.name));
+  }
+
+  /** How an agent did over the last `days` days, and the days before (core/scorecard.mjs). */
+  score(agent, days = 7) {
+    this.assertAgent(agent);
+    const now = this.now();
+    const since = now - 2 * days * DAY_MS;
+    return scorecard({
+      now,
+      days,
+      jobs: this.store.agentJobsSince(agent, since),
+      feedback: this.store
+        .eventsOfType("feedback", since)
+        .filter((e) => e.data.agent === agent)
+        .map((e) => ({ at: e.at, ...e.data })),
+      approvals: this.store.agentApprovalsSince(agent, since),
+      skills: this.skills().filter((e) => e.owner === agent),
+    });
+  }
+
+  /**
+   * Once a week, each agent that did real work looks back at its numbers and corrections and
+   * improves its skills (or proposes an instruction change). config.retro: { day, at }.
+   */
+  retroTick() {
+    const retro = { day: 0, at: "10:00", ...(this.config.retro ?? {}) };
+    if (retro.enabled === false) return;
+    const now = this.now();
+    const { date, minutes, weekday } = localParts(now, this.offset());
+    const [h, m] = String(retro.at).split(":").map(Number);
+    if (weekday !== retro.day || minutes < h * 60 + (m || 0)) return;
+    if (this.store.get("retro:last") === date) return;
+    if (blockedBy(now, this.offset(), this.config.quiet)) return;
+    this.store.set("retro:last", date);
+    for (const agent of this.team()) {
+      const card = this.score(agent);
+      if (!card.week.realTasks) continue;
+      const since = now - 7 * DAY_MS;
+      this.enqueue({
+        agent,
+        kind: "retro",
+        priority: PRIORITY.schedule,
+        prompt: retroPrompt({
+          agent,
+          brain: this.paths.brain,
+          today: date,
+          owner: owner(),
+          card,
+          corrections: [
+            ...this.store
+              .eventsOfType("feedback", since)
+              .filter((e) => e.data.agent === agent && e.data.rating === "down")
+              .map(
+                (e) =>
+                  `Thumbs down${e.data.note ? `: ${e.data.note}` : ""}${e.data.reply ? ` (on: "${oneLine(e.data.reply, 120)}")` : ""}`,
+              ),
+            ...this.store
+              .agentApprovalsSince(agent, since)
+              .filter((a) => a.status === "denied")
+              .map((a) => `Said no to: ${a.summary}${a.note ? ` (${a.note})` : ""}`),
+            ...this.store
+              .agentJobsSince(agent, since)
+              .filter((j) => j.status === "failed")
+              .map((j) => `Failed: ${oneLine(j.prompt, 100)} — ${j.error ?? ""}`),
+          ].slice(0, 20),
+        }),
+      });
+    }
+    this.event("retro.queued", { date });
   }
 
   /** Right after a task that took real work, the agent writes down or improves its skill. */
@@ -1080,6 +1175,7 @@ export class Hub extends EventEmitter {
       this.event("schedule.fired", { id: s.id });
     }
     this.store.set("scheduleRuns", lastRuns);
+    this.retroTick();
   }
 
   /**
@@ -1395,14 +1491,16 @@ export class Hub extends EventEmitter {
     } else if (result && !result.isError) {
       const reply = result.text || texts.join("\n\n");
       // A skill review shows as a small note, and not at all when there was nothing to save.
-      const review = job.kind === "review";
+      const review = job.kind === "review" || job.kind === "retro";
       if (!review || !savedNothing(reply)) {
         this.store.addMessage({
           agent: job.agent,
           threadId: thread.id,
           jobId: job.id,
           role: review ? "note" : "agent",
-          text: review ? `Skills: ${oneLine(reply, 300)}` : reply,
+          text: review
+            ? `${job.kind === "retro" ? "Weekly look-back" : "Skills"}: ${oneLine(reply, 300)}`
+            : reply,
           at: this.now(),
         });
       }
