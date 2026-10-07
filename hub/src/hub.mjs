@@ -5,7 +5,7 @@
 
 import { EventEmitter } from "node:events";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { crewNote, buildArgs, runSettings } from "./core/policy.mjs";
 import { admit, halfRate, PRIORITY, usageLimit } from "./core/budget.mjs";
@@ -29,6 +29,7 @@ import { terminalTurns } from "./core/transcript.mjs";
 import { MAX_PER_MESSAGE, attachmentNote, kindOf } from "./core/attachments.mjs";
 import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./core/teamtalk.mjs";
 import { GRANTS } from "./core/gate.mjs";
+import { needsReview, reviewPrompt, savedNothing, skillEntry, skillsNote } from "./core/skills.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -430,6 +431,61 @@ export class Hub extends EventEmitter {
     return { ok: true, review: review ? review.id : null };
   }
 
+  // --- skills the agents write and improve themselves (core/skills.mjs)
+
+  /** Every team agent's skills and records, and older playbooks, from the brain. */
+  skills() {
+    const entries = [];
+    const brain = this.paths.brain.replace(/\\/g, "/");
+    const list = (dir) => {
+      try {
+        return readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+    };
+    const read = (path) => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    };
+    for (const agent of this.team()) {
+      const dept = `${brain}/departments/${agent}`;
+      for (const d of list(`${dept}/skills`)) {
+        if (!d.isDirectory()) continue;
+        const path = `${dept}/skills/${d.name}/SKILL.md`;
+        const text = read(path);
+        if (text !== null) entries.push(skillEntry({ owner: agent, path, text }));
+      }
+      for (const f of list(`${dept}/playbooks`)) {
+        if (!f.isFile() || !f.name.endsWith(".md")) continue;
+        const path = `${dept}/playbooks/${f.name}`;
+        const text = read(path);
+        if (text !== null) entries.push(skillEntry({ owner: agent, path, text, playbook: true }));
+      }
+    }
+    return entries;
+  }
+
+  /** Right after a task that took real work, the agent writes down or improves its skill. */
+  queueReview(job) {
+    return this.enqueue({
+      agent: job.agent,
+      kind: "review",
+      priority: PRIORITY.urgent,
+      prompt: reviewPrompt({
+        agent: job.agent,
+        brain: this.paths.brain,
+        request: job.prompt,
+        today: localParts(this.now(), this.offset()).date,
+        owner: owner(),
+      }),
+      tainted: Boolean(job.tainted),
+    });
+  }
+
   /** Queue a learning review with the feedback gathered so far, which it then clears. */
   learn(agent) {
     const key = "feedback:" + agent;
@@ -446,7 +502,7 @@ export class Hub extends EventEmitter {
       "",
       ...lines,
       "",
-      "1. If there is a lesson you will need again, save it now as a short playbook or memory note in your own department folder.",
+      "1. If there is a lesson you will need again, save it now: in the skill you used (a new version, with a CHANGELOG line), or as a memory note in your own department folder.",
       "2. If your standing instructions themselves should change (your file is " +
         this.paths.agentsDir.replace(/\\/g, "/") +
         "/" +
@@ -1254,6 +1310,11 @@ export class Hub extends EventEmitter {
         name: this.titleOf(job.agent),
         tainted: Boolean(job.tainted),
         crew: this.paths.cli ? `"${this.nodeBin}" "${this.paths.cli}"` : undefined,
+        skills: skillsNote({
+          agent: job.agent,
+          brain: this.paths.brain,
+          entries: this.skills(),
+        }),
       }),
       ...(approvals ? { mcpConfigPath: mcpPath } : {}),
       partial: job.kind === "call",
@@ -1270,6 +1331,7 @@ export class Hub extends EventEmitter {
     let result = null;
     let lastContext = null;
     let wrote = false;
+    let toolCount = 0;
     /** Files this run wrote, so only they are committed to the brain afterwards. */
     const files = new Set();
 
@@ -1297,6 +1359,7 @@ export class Hub extends EventEmitter {
           texts.push(e.text);
           if (e.contextTokens) lastContext = e.contextTokens;
         } else if (e.kind === "tool") {
+          toolCount += 1;
           if (["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(e.name)) {
             wrote = true;
             const path = e.input?.file_path ?? e.input?.notebook_path;
@@ -1331,19 +1394,24 @@ export class Hub extends EventEmitter {
       this.finish(job, "failed", { error: "timed out" });
     } else if (result && !result.isError) {
       const reply = result.text || texts.join("\n\n");
-      this.store.addMessage({
-        agent: job.agent,
-        threadId: thread.id,
-        jobId: job.id,
-        role: "agent",
-        text: reply,
-        at: this.now(),
-      });
+      // A skill review shows as a small note, and not at all when there was nothing to save.
+      const review = job.kind === "review";
+      if (!review || !savedNothing(reply)) {
+        this.store.addMessage({
+          agent: job.agent,
+          threadId: thread.id,
+          jobId: job.id,
+          role: review ? "note" : "agent",
+          text: review ? `Skills: ${oneLine(reply, 300)}` : reply,
+          at: this.now(),
+        });
+      }
       this.store.recordTurn(thread.id, lastContext);
       this.finish(job, "done", { result: reply, usage: JSON.stringify(result.usage ?? null) });
       if (wrote) {
         this.afterWrite({ agent: job.agent, jobId: job.id, kind: job.kind, files: [...files] });
       }
+      if (needsReview(job, toolCount)) this.queueReview(job);
     } else {
       const detail = result?.text || exit.stderr || `exit ${exit.code}`;
       if (SESSION_IN_USE.test(detail) && !thread.started) {

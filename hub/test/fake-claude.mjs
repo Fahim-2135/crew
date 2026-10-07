@@ -6,6 +6,7 @@
 //   FAIL      ends with an error result
 //   BADTOOLS  reports Bash among its tools (the restriction did not hold)
 //   WRITE     reports a Write tool call before answering
+//   TOOLS5    reports five Read tool calls before answering (real work: a skill review follows)
 //   INUSE     refuses --session-id as "already in use" (only --resume works)
 
 const args = process.argv.slice(2);
@@ -45,6 +46,16 @@ out({
 if (prompt.includes("SLEEP")) {
   setTimeout(() => {}, 600_000);
 } else {
+  if (prompt.includes("TOOLS5")) {
+    for (let i = 0; i < 5; i++) {
+      out({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", name: "Read", input: { file_path: `f${i}.md` } }],
+        },
+      });
+    }
+  }
   if (prompt.includes("WRITE")) {
     out({
       type: "assistant",
