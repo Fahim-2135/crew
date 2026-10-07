@@ -233,6 +233,7 @@ async function start() {
     port: paths.port,
     token,
     remoteHost,
+    findRemoteHost: tailscaleName,
   });
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {

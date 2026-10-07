@@ -276,3 +276,54 @@ test("the FCM sender signs its own Google sign-in and sends a high-priority mess
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a hub that started before Tailscale was up learns its name when a phone calls", async () => {
+  const { hub } = setup();
+  const probe = createApi(hub, { port: 0, token: TOKEN });
+  await new Promise((r) => probe.listen(0, "127.0.0.1", r));
+  const port = probe.address().port;
+  probe.close();
+  let tailscale = null; // not connected yet
+  let lookups = 0;
+  const api = createApi(hub, {
+    port,
+    token: TOKEN,
+    remoteHost: null,
+    findRemoteHost: () => (lookups++, tailscale),
+  });
+  await new Promise((r) => api.listen(port, "127.0.0.1", r));
+  const status = (host) =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/v1/agents",
+          headers: { host, authorization: `Bearer ${TOKEN}` },
+        },
+        (res) => (res.resume(), resolve(res.statusCode)),
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  try {
+    assert.equal(await status(REMOTE), 421); // Tailscale still down
+    tailscale = REMOTE;
+    assert.equal(await status(REMOTE), 421); // looked up at most every 30 s
+    assert.equal(lookups, 1);
+    // A new lookup after the wait finds the name, and it stays allowed.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31_000;
+    try {
+      assert.equal(await status(REMOTE), 200);
+      assert.equal(await status(REMOTE), 200);
+      assert.equal(lookups, 2);
+      // Some other ts.net name is still refused.
+      assert.equal(await status("someone-else.tail0000.ts.net"), 421);
+    } finally {
+      Date.now = realNow;
+    }
+  } finally {
+    api.close();
+  }
+});

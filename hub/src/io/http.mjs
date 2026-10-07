@@ -55,8 +55,10 @@ async function serveStatic(res, entry) {
 
 /**
  * @param {import("../hub.mjs").Hub} hub
- * @param {{ port: number, token: string, extraHosts?: string[], remoteHost?: string | null }} options
+ * @param {{ port: number, token: string, extraHosts?: string[], remoteHost?: string | null,
+ *   findRemoteHost?: () => string | null }} options
  *   remoteHost: this PC's Tailscale name, which phones use (and which is also an allowed host)
+ *   findRemoteHost: looks the name up again, for a hub that started before Tailscale was up
  */
 export function createApi(hub, options) {
   const hosts = new Set([
@@ -66,6 +68,22 @@ export function createApi(hub, options) {
     ...(options.remoteHost ? [options.remoteHost] : []),
   ]);
   const expected = Buffer.from(options.token);
+  let remoteHost = options.remoteHost ?? null;
+  let lookedUpAt = 0;
+  const LOOKUP_EVERY_MS = 30_000;
+
+  /** A Tailscale name the hub didn't know at start (Tailscale came up later) is learned once. */
+  const allowedHost = (host) => {
+    if (hosts.has(host)) return true;
+    if (!options.findRemoteHost || !host.endsWith(".ts.net")) return false;
+    if (Date.now() - lookedUpAt < LOOKUP_EVERY_MS) return false;
+    lookedUpAt = Date.now();
+    const name = options.findRemoteHost();
+    if (!name || name !== host) return false;
+    remoteHost = name;
+    hosts.add(name);
+    return true;
+  };
 
   /** @returns {{ kind: "local" } | { kind: "device", device: object } | null} */
   const authorize = (req) => {
@@ -283,7 +301,7 @@ export function createApi(hub, options) {
         localOnly(auth);
         return {
           ...hub.startPairing(),
-          hubUrl: options.remoteHost ? `https://${options.remoteHost}` : null,
+          hubUrl: remoteHost ? `https://${remoteHost}` : null,
         };
       },
     ],
@@ -344,7 +362,7 @@ export function createApi(hub, options) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     try {
-      if (!hosts.has(String(req.headers.host ?? ""))) throw new HubError(421, "unexpected host");
+      if (!allowedHost(String(req.headers.host ?? ""))) throw new HubError(421, "unexpected host");
       if (req.method === "GET" && url.pathname === "/v1/health")
         return send(res, 200, { ok: true });
       if (req.method === "GET" && STATIC[url.pathname]) {
