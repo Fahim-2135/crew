@@ -684,6 +684,7 @@ async function openSkills() {
     ? `${trendText[t]} Corrections are thumbs down, quick OKs you said no to, and failed runs.`
     : "Corrections are thumbs down, quick OKs you said no to, and failed runs.";
 
+  paintChecks(agent).catch(() => {});
   if (!skills.length) {
     $("skills-list").append(
       el(
@@ -713,6 +714,55 @@ async function openSkills() {
       item.append(list);
     }
     $("skills-list").append(item);
+  }
+}
+
+const whenLabel = (ms) =>
+  new Date(ms).toLocaleString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+/** The checks the agent scheduled for itself, open ones first, each with Cancel. */
+async function paintChecks(agent) {
+  const { checks } = await api(`/v1/checks?agent=${agent}`);
+  const list = $("checks-list");
+  list.replaceChildren();
+  if (!checks.length) {
+    list.append(
+      el(
+        "li",
+        "faint",
+        "None. It schedules its own when something needs a look later (a booking, a reply it's waiting on, how a post did).",
+      ),
+    );
+    return;
+  }
+  for (const c of checks.slice(0, 12)) {
+    const open = c.status === "active";
+    const item = el("li", `skill${open ? "" : " closed"}`);
+    const row = el("div", "check-row");
+    const body = el("div");
+    const when = open
+      ? `Next: ${whenLabel(c.at)}${c.every ? ` · every ${Math.round(c.every / 3_600_000)}h until ${whenLabel(c.until)}` : ""}`
+      : `${c.status === "cancelled" ? "Cancelled" : "Done"} · ran ${c.runs}×`;
+    body.append(el("span", "check-when", when), el("p", "skill-desc", c.why || c.what));
+    row.append(body);
+    if (open) {
+      const cancel = el("button", "ghost", "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", async () => {
+        cancel.disabled = true;
+        await api(`/v1/checks/${c.id}/cancel`, { method: "POST", body: "{}" }).catch(() => {});
+        paintChecks(agent).catch(() => {});
+      });
+      row.append(cancel);
+    }
+    item.append(row);
+    list.append(item);
   }
 }
 

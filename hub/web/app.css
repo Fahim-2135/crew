@@ -640,6 +640,41 @@ button.sync[hidden] {
   color: var(--faint);
 }
 
+.checks-title {
+  margin: 18px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.check-row > div {
+  flex: 1;
+}
+
+.check-row .skill-desc {
+  flex: 1;
+  margin: 0;
+  color: var(--ink);
+}
+
+.check-when {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.skill.closed {
+  opacity: 0.6;
+}
+
 /* ---- quick OKs and approvals: a card above the messages ---- */
 
 .approvals {

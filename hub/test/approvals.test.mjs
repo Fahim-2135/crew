@@ -444,7 +444,7 @@ test("the crew tool server turns an agent's tool call into a pending approval", 
     const { tools } = (await call(2, "tools/list", {})).result;
     assert.deepEqual(
       tools.map((t) => t.name),
-      ["request_approval", "ask_teammate"],
+      ["request_approval", "ask_teammate", "schedule_check", "list_checks", "cancel_check"],
     );
     const ask = tools[1].description;
     assert.match(ask, /ceo \(CEO\)/, "names the teammates");

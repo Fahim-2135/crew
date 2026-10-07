@@ -31,6 +31,15 @@ import { REPLY_LIMIT, askBlocked, askPrompt, replyPrompt, teamLines } from "./co
 import { GRANTS } from "./core/gate.mjs";
 import { needsReview, reviewPrompt, savedNothing, skillEntry, skillsNote } from "./core/skills.mjs";
 import { DAY_MS, retroPrompt, scorecard } from "./core/scorecard.mjs";
+import {
+  LIMITS as CHECK_LIMITS,
+  allFine,
+  checkPrompt,
+  checksNote,
+  finished as checkFinished,
+  nextRun,
+  planCheck,
+} from "./core/checks.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -562,6 +571,148 @@ export class Hub extends EventEmitter {
       });
     }
     this.event("retro.queued", { date });
+  }
+
+  // --- checks agents schedule for themselves (core/checks.mjs)
+
+  /** All checks, or one agent's; open ones first, then the latest finished. */
+  checks(agent = null) {
+    const all = this.store.get("checks", []);
+    return all
+      .filter((c) => !agent || c.agent === agent)
+      .sort(
+        (a, b) =>
+          (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1) ||
+          (a.status === "active" ? a.at - b.at : b.createdAt - a.createdAt),
+      );
+  }
+
+  saveChecks(list) {
+    // Finished checks are kept for a while, so the user can see what ran.
+    const open = list.filter((c) => c.status === "active");
+    const closed = list
+      .filter((c) => c.status !== "active")
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 50);
+    this.store.set("checks", [...open, ...closed]);
+  }
+
+  /**
+   * An agent's run leaves itself a check (schedule_check).
+   * @param {{ jobId: number, when: string, every?: string, until?: string, what: string, why?: string }} input
+   */
+  addCheck(input) {
+    const job = this.store.job(Number(input.jobId));
+    if (!job || job.status !== "running") {
+      throw new HubError(403, "only a run in progress can schedule a check");
+    }
+    const what = String(input.what ?? "").trim();
+    if (!what) throw new HubError(400, "say what to check and what counts as a problem");
+    const list = this.store.get("checks", []);
+    if (
+      list.filter((c) => c.agent === job.agent && c.status === "active").length >=
+      CHECK_LIMITS.perAgent
+    ) {
+      throw new HubError(
+        409,
+        `you already have ${CHECK_LIMITS.perAgent} open checks: cancel one you no longer need`,
+      );
+    }
+    let plan;
+    try {
+      plan = planCheck(input, this.now(), this.offset());
+    } catch (err) {
+      throw new HubError(400, err.message);
+    }
+    const check = {
+      id: randomBytes(4).toString("hex"),
+      agent: job.agent,
+      what: what.slice(0, 2000),
+      why:
+        String(input.why ?? "")
+          .trim()
+          .slice(0, 300) || null,
+      ...plan,
+      status: "active",
+      runs: 0,
+      createdAt: this.now(),
+      jobId: job.id,
+      tainted: Boolean(job.tainted),
+    };
+    this.saveChecks([...list, check]);
+    this.event("check.added", { agent: job.agent, id: check.id, at: check.at });
+    return check;
+  }
+
+  /** The user (or the agent itself) cancels a check. */
+  cancelCheck(id, by = "user") {
+    const list = this.store.get("checks", []);
+    const check = list.find((c) => c.id === id);
+    if (!check) throw new HubError(404, "no such check");
+    if (check.status === "active") {
+      check.status = "cancelled";
+      check.endedAt = this.now();
+      check.cancelledBy = by;
+      this.saveChecks(list);
+      this.event("check.cancelled", { agent: check.agent, id, by });
+    }
+    return check;
+  }
+
+  /** Queue every check that is due (quiet hours wait; the queue applies the usage rules). */
+  checksTick() {
+    if (this.store.get("paused", false)) return;
+    const now = this.now();
+    if (blockedBy(now, this.offset(), this.config.quiet)) return;
+    const list = this.store.get("checks", []);
+    let changed = false;
+    for (const check of list) {
+      if (check.status !== "active" || check.at > now) continue;
+      if (!this.team().includes(check.agent)) {
+        check.status = "cancelled";
+        changed = true;
+        continue;
+      }
+      const job = this.enqueue({
+        agent: check.agent,
+        kind: "check",
+        priority: PRIORITY.schedule,
+        prompt: checkPrompt({
+          check,
+          owner: owner(),
+          when: localParts(check.createdAt, this.offset()).date,
+        }),
+        tainted: check.tainted,
+      });
+      this.store.set(`check:${job.id}`, check.id);
+      check.runs += 1;
+      check.lastRunAt = now;
+      // A check that fell far behind (the PC was off) runs once, then picks up its rhythm.
+      let next = nextRun(check);
+      while (next != null && next <= now) {
+        check.at = next;
+        next = nextRun(check);
+      }
+      if (next == null) {
+        check.status = "done";
+        check.endedAt = now;
+      } else check.at = next;
+      changed = true;
+    }
+    if (changed) this.saveChecks(list);
+  }
+
+  /** After a check ran: tell the user when it found something; stop it when it is settled. */
+  checkRan(job, reply, fine) {
+    const id = this.store.get(`check:${job.id}`);
+    if (!fine) {
+      this.event("check.found", {
+        agent: job.agent,
+        jobId: job.id,
+        text: oneLine(reply, 200),
+      });
+    }
+    if (id && checkFinished(reply)) this.cancelCheck(id, job.agent);
   }
 
   /** Right after a task that took real work, the agent writes down or improves its skill. */
@@ -1176,6 +1327,7 @@ export class Hub extends EventEmitter {
     }
     this.store.set("scheduleRuns", lastRuns);
     this.retroTick();
+    this.checksTick();
   }
 
   /**
@@ -1411,6 +1563,7 @@ export class Hub extends EventEmitter {
           brain: this.paths.brain,
           entries: this.skills(),
         }),
+        checks: checksNote(),
       }),
       ...(approvals ? { mcpConfigPath: mcpPath } : {}),
       partial: job.kind === "call",
@@ -1492,7 +1645,17 @@ export class Hub extends EventEmitter {
       const reply = result.text || texts.join("\n\n");
       // A skill review shows as a small note, and not at all when there was nothing to save.
       const review = job.kind === "review" || job.kind === "retro";
-      if (!review || !savedNothing(reply)) {
+      const fine = job.kind === "check" && allFine(reply);
+      if (fine) {
+        this.store.addMessage({
+          agent: job.agent,
+          threadId: thread.id,
+          jobId: job.id,
+          role: "note",
+          text: `Checked: ${oneLine(reply.replace(/^\W*all fine\W*/i, ""), 300)}`,
+          at: this.now(),
+        });
+      } else if (!review || !savedNothing(reply)) {
         this.store.addMessage({
           agent: job.agent,
           threadId: thread.id,
@@ -1509,6 +1672,7 @@ export class Hub extends EventEmitter {
       if (wrote) {
         this.afterWrite({ agent: job.agent, jobId: job.id, kind: job.kind, files: [...files] });
       }
+      if (job.kind === "check") this.checkRan(job, reply, fine);
       if (needsReview(job, toolCount)) this.queueReview(job);
     } else {
       const detail = result?.text || exit.stderr || `exit ${exit.code}`;
@@ -1692,6 +1856,11 @@ export class Hub extends EventEmitter {
       });
     } else if (type === "notify") {
       this.notifyFn({ title: String(data.title ?? "Crew"), body: String(data.body ?? "") });
+    } else if (type === "check.found") {
+      this.notifyFn({
+        title: `${this.titleOf(data.agent)} checked something`,
+        body: String(data.text ?? ""),
+      });
     }
   }
 

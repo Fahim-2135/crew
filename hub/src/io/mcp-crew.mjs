@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// The `crew` MCP server Claude Code starts for every Crew run: it gives the agent two tools,
-// `request_approval` and `ask_teammate`, and forwards each call to the hub. Zero dependencies: newline-delimited
+// The `crew` MCP server Claude Code starts for every Crew run: it gives the agent its Crew tools
+// (`request_approval`, `ask_teammate`, and `schedule_check` / `list_checks` / `cancel_check`)
+// and forwards each call to the hub. Zero dependencies: newline-delimited
 // JSON-RPC 2.0 on stdin/stdout (verified against Claude Code 2.1.288 in spike 0.6).
 //
 // The hub writes the run's identity into this server's environment (CREW_JOB, CREW_AGENT),
@@ -53,6 +54,77 @@ const askTool = (team) => ({
     required: ["agent", "question"],
   },
 });
+
+/** Checks the agent schedules for itself (hub core/checks.mjs). */
+const CHECK_TOOLS = [
+  {
+    name: "schedule_check",
+    description: [
+      "Leave yourself a check for later: Crew runs it when it is due, even if nobody has messaged you. Use it on your own for anything with a time ahead that could go wrong, something you are waiting on, a result worth checking later, or a retry.",
+      'when: "in 2h", "in 3 days", or a local time "YYYY-MM-DD HH:MM". For a check that repeats, add every ("3h", "1 day", at least hourly) and until (when to stop, within 30 days).',
+      "what: full instructions to your future self (it won't remember this chat): what to look at, where, and what counts as a problem.",
+    ].join(" "),
+    inputSchema: {
+      type: "object",
+      properties: {
+        when: { type: "string" },
+        what: { type: "string" },
+        why: { type: "string", description: "One line on why, shown to the user" },
+        every: { type: "string" },
+        until: { type: "string" },
+      },
+      required: ["when", "what"],
+    },
+  },
+  {
+    name: "list_checks",
+    description: "Your scheduled checks: open ones first, with their ids and next run.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "cancel_check",
+    description: "Remove one of your checks that is no longer needed.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+];
+
+const when = (ms) =>
+  new Date(ms).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+
+async function checkTool(name, args) {
+  if (name === "schedule_check") {
+    const { ok, status, body } = await hub("POST", "/v1/checks", {
+      jobId: Number(process.env.CREW_JOB),
+      ...args,
+    });
+    if (!ok) return text(`Not scheduled: ${body.error ?? `HTTP ${status}`}.`, true);
+    const c = body.check;
+    return text(
+      `Scheduled check ${c.id}: first run ${when(c.at)}${c.every ? `, then every ${Math.round(c.every / 3_600_000)}h until ${when(c.until)}` : ""}.`,
+    );
+  }
+  const { ok, status, body } =
+    name === "list_checks"
+      ? await hub("GET", `/v1/checks?agent=${encodeURIComponent(process.env.CREW_AGENT ?? "")}`)
+      : await hub("POST", `/v1/checks/${encodeURIComponent(String(args.id ?? ""))}/cancel`, {
+          by: "agent",
+        });
+  if (!ok) return text(`Failed: ${body.error ?? `HTTP ${status}`}.`, true);
+  if (name === "cancel_check") return text(`Check ${body.check.id} is ${body.check.status}.`);
+  const open = body.checks.filter((c) => c.status === "active");
+  if (!open.length) return text("You have no open checks.");
+  return text(
+    open
+      .map(
+        (c) => `${c.id}: next ${when(c.at)}${c.every ? " (repeats)" : ""}: ${c.what.slice(0, 160)}`,
+      )
+      .join("\n"),
+  );
+}
 
 const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\n");
 const text = (t, isError = false) => ({ content: [{ type: "text", text: t }], isError });
@@ -137,7 +209,10 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
       },
     });
   } else if (req.method === "tools/list") {
-    send({ id: req.id, result: { tools: [TOOL, askTool(await teammates())] } });
+    send({
+      id: req.id,
+      result: { tools: [TOOL, askTool(await teammates()), ...CHECK_TOOLS] },
+    });
   } else if (req.method === "tools/call") {
     let result;
     try {
@@ -147,7 +222,9 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
           ? await requestApproval(args)
           : req.params?.name === "ask_teammate"
             ? await askTeammate(args)
-            : text(`unknown tool ${req.params?.name}`, true);
+            : CHECK_TOOLS.some((t) => t.name === req.params?.name)
+              ? await checkTool(req.params.name, args)
+              : text(`unknown tool ${req.params?.name}`, true);
     } catch (err) {
       result = text(`Crew could not be reached: ${err?.message ?? err}`, true);
     }

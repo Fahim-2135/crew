@@ -71,6 +71,7 @@ export function crewNote(context) {
     );
   }
   if (context.skills) lines.push("", context.skills);
+  if (context.checks) lines.push("", context.checks);
   if (context.brief) lines.push("", `# ${owners()} brief`, context.brief.trim());
   return lines.join("\n");
 }

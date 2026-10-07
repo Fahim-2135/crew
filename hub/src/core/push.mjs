@@ -95,6 +95,14 @@ function rule(event, { job = null, callBack = false, quiet = false, titles = {} 
         urgent: true,
         ring: false,
       };
+    case "check.found":
+      return {
+        title: `${title(data.agent)} checked something`,
+        body: String(data.text ?? "Tap to read it.").slice(0, 160),
+        data: { k: "thread", agent: data.agent },
+        urgent: true,
+        ring: false,
+      };
     case "report":
       return {
         title: "Your Crew report is ready",

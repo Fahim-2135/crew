@@ -247,6 +247,27 @@ export function createApi(hub, options) {
     ["GET", /^\/v1\/face$/, () => hub.faceStatus()],
     [
       "POST",
+      /^\/v1\/checks$/,
+      async (req, _m, _url, auth) => {
+        localOnly(auth); // an agent's run on this PC schedules a check
+        return { check: hub.addCheck(await readJson(req)) };
+      },
+    ],
+    [
+      "GET",
+      /^\/v1\/checks$/,
+      (_req, _m, url) => ({ checks: hub.checks(url.searchParams.get("agent") || null) }),
+    ],
+    [
+      "POST",
+      /^\/v1\/checks\/([0-9a-f]+)\/cancel$/,
+      async (req, m) => {
+        const body = await readJson(req).catch(() => ({}));
+        return { check: hub.cancelCheck(m[1], body?.by === "agent" ? "agent" : "user") };
+      },
+    ],
+    [
+      "POST",
       /^\/v1\/face$/,
       async (req, _m, _url, auth) => {
         localOnly(auth); // it starts or closes an app on the PC
