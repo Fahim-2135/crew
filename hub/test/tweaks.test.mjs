@@ -207,3 +207,15 @@ test("a skill review after a task runs quietly and takes no notes", () => {
     done();
   }
 });
+
+test("a note that arrives after the task ended says so in the chat", () => {
+  const { hub, done } = setup();
+  try {
+    hub.tweak("social", "does X punish links?");
+    const [you, note] = hub.messages("social");
+    assert.equal(you.role, "you");
+    assert.match(note.text, /had already finished, so this went in as a new message/);
+  } finally {
+    done();
+  }
+});

@@ -1025,7 +1025,18 @@ export class Hub extends EventEmitter {
     const words = String(text ?? "").trim();
     if (!words) throw new HubError(400, "empty message");
     const job = this.runningJob(agent);
-    if (!job) return { job: this.send(agent, words, options), now: false };
+    if (!job) {
+      // It finished before the note arrived: it goes in as the next message, and the chat says so.
+      const next = this.send(agent, words, options);
+      this.store.addMessage({
+        agent,
+        jobId: next.id,
+        role: "note",
+        text: `${this.titleOf(agent)} had already finished, so this went in as a new message.`,
+        at: this.now(),
+      });
+      return { job: next, now: false };
+    }
     const key = `tweaks:${job.id}`;
     this.store.set(key, [...this.store.get(key, []), words].slice(-10));
     this.store.addMessage({ agent, jobId: job.id, role: "you", text: words, at: this.now() });
@@ -1554,10 +1565,15 @@ export class Hub extends EventEmitter {
     let thread = this.store.activeThread(job.agent);
     let opening = "";
     if (thread) {
-      const reason = rotationReason(
-        { ...thread, autonomous: job.kind !== "chat" },
-        { now: this.now(), agentHash },
-      );
+      // A skill review must see the task it reviews: it never starts a fresh session (the next
+      // task does, if the thread has grown too long).
+      const reason =
+        job.kind === "review"
+          ? null
+          : rotationReason(
+              { ...thread, autonomous: job.kind !== "chat" },
+              { now: this.now(), agentHash },
+            );
       if (reason) {
         opening = handover(this.store.messages(job.agent, 12, thread.id));
         this.store.retireThread(thread.id, reason);
