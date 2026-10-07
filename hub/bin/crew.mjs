@@ -42,6 +42,7 @@ import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { applyConfig, crewPaths, ensureDirs, localToken } from "../src/io/paths.mjs";
 
 const paths = crewPaths();
@@ -151,6 +152,7 @@ async function start() {
   const { scanInboxes, watchInboxes } = await import("../src/io/watch.mjs");
   const { resolveConfig } = await import("../src/core/config.mjs");
   const { fcmSender } = await import("../src/io/fcm.mjs");
+  const { vapidKeys, webPushSender } = await import("../src/io/webpush.mjs");
   const { createAgent, updateAgent, definitionHash } = await import("../src/io/team.mjs");
   const { commitRun } = await import("../src/io/brain-git.mjs");
   const { readTranscript } = await import("../src/io/transcripts.mjs");
@@ -185,6 +187,14 @@ async function start() {
     execute,
     capturePreconditions,
     push: fcmSender(join(paths.home, "firebase-key.json")),
+    ...(() => {
+      // The phone browser app's notifications: Crew's own VAPID key, made on first start.
+      const keys = vapidKeys(paths.home);
+      return {
+        webPush: webPushSender({ keys, subject: "https://github.com/Fahim-2135/crew" }),
+        webPushKey: keys.publicKey,
+      };
+    })(),
     createAgent,
     updateAgent,
     definitionHash,
@@ -243,6 +253,19 @@ async function start() {
     }
     throw err;
   });
+
+  // The phone browser app on the same Wi-Fi (config.lan): a second address on this network that
+  // only takes phone keys. Off unless switched on in the window's Phones sheet.
+  if (config.lan?.enabled) {
+    const lanPort = Number(config.lan.port ?? 7789);
+    const lanHosts = lanAddresses().map((ip) => `${ip}:${lanPort}`);
+    const lan = createApi(hub, { port: lanPort, token, lan: true, extraHosts: lanHosts });
+    lan.on("error", (err) => log(`home Wi-Fi address not available: ${err.message}`));
+    lan.listen(lanPort, "0.0.0.0", () =>
+      log(`phones on the same Wi-Fi reach it at ${lanHosts.map((h) => `http://${h}`).join(", ")}`),
+    );
+    hub.lanUrls = lanHosts.map((h) => `http://${h}`);
+  }
 
   let stopWatching = () => {};
   let scheduler = null;
@@ -439,6 +462,19 @@ function workingDirs() {
 }
 
 // --- phones
+
+/** This PC's addresses on its local networks (Wi-Fi, Ethernet), not Tailscale's 100.x. */
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) {
+      if (a.family !== "IPv4" || a.internal) continue;
+      if (a.address.startsWith("100.") || a.address.startsWith("169.254.")) continue;
+      out.push(a.address);
+    }
+  }
+  return out;
+}
 
 /** This PC's Tailscale name (laptop.tailnet.ts.net), or null without Tailscale. */
 function tailscaleName() {

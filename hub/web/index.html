@@ -2,8 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf9f5" />
     <title>Crew</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon.png" />
     <link rel="icon" type="image/png" href="/icon.png?v=critters" />
     <link rel="stylesheet" href="/fonts/fonts.css" />
     <link rel="stylesheet" href="/app.css" />
@@ -12,6 +15,9 @@
   <body>
     <div class="app">
       <nav class="sidebar" aria-label="Agents">
+        <button type="button" class="notify-bar" id="notify-bar" hidden>
+          Get Crew's notifications on this phone
+        </button>
         <header class="brand">
           <span class="brand-name">Crew</span>
           <span class="brand-tools">
@@ -78,6 +84,9 @@
         </div>
         <section class="thread" id="thread" hidden>
           <header class="thread-head">
+            <button type="button" class="icon-btn back" id="back" aria-label="Back to the team">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+            </button>
             <button
               type="button"
               class="profile-open"
@@ -262,8 +271,16 @@
             <dd class="pair-code" id="pair-code"></dd>
           </dl>
           <p class="faint" id="pair-expiry"></p>
+          <p class="faint" id="pair-web"></p>
         </div>
         <button type="button" class="primary" id="pair-start">Pair a phone</button>
+        <label class="lan-switch">
+          <input type="checkbox" id="lan-toggle" />
+          <span>
+            Same Wi-Fi: let phones on this network open Crew in the browser too (no notifications
+            there; Tailscale gives the full app).
+          </span>
+        </label>
       </div>
     </dialog>
 
@@ -273,6 +290,22 @@
         This window needs a new key. Close it, then open Crew again from the Crew icon on your
         desktop.
       </p>
+      <form class="pair-phone" id="pair-phone">
+        <p>
+          <strong>On a phone?</strong> In Crew on your PC, open <em>Phones</em> and press
+          <em>Pair a phone</em>, then type the code here.
+        </p>
+        <label for="pair-phone-code" class="sr-only">Pairing code</label>
+        <input
+          id="pair-phone-code"
+          autocomplete="one-time-code"
+          inputmode="text"
+          maxlength="9"
+          placeholder="ABCD 2345"
+        />
+        <button type="submit" class="primary">Pair this phone</button>
+        <p class="faint" id="pair-phone-note"></p>
+      </form>
     </div>
   </body>
 </html>

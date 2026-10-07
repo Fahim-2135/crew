@@ -25,6 +25,14 @@ const STATIC = {
   "/app.js": { file: new URL("app.js", WEB), type: "text/javascript; charset=utf-8" },
   "/app.css": { file: new URL("app.css", WEB), type: "text/css; charset=utf-8" },
   "/icon.png": { file: new URL("icon.png", WEB), type: "image/png" },
+  // The phone browser app: install manifest, service worker (notifications), its icons.
+  "/manifest.webmanifest": {
+    file: new URL("manifest.webmanifest", WEB),
+    type: "application/manifest+json",
+  },
+  "/sw.js": { file: new URL("sw.js", WEB), type: "text/javascript; charset=utf-8" },
+  "/icon-1024.png": { file: new URL("icon-1024.png", WEB), type: "image/png" },
+  "/badge.png": { file: new URL("badge.png", WEB), type: "image/png" },
   "/faces.mjs": {
     file: new URL("../../../shared/faces.mjs", import.meta.url),
     type: "text/javascript; charset=utf-8",
@@ -90,7 +98,8 @@ export function createApi(hub, options) {
     const header = String(req.headers.authorization ?? "");
     const key = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
     const given = Buffer.from(key);
-    if (given.length === expected.length && timingSafeEqual(given, expected)) {
+    // On the home-Wi-Fi address only phone keys count: the PC's own key never travels the network.
+    if (!options.lan && given.length === expected.length && timingSafeEqual(given, expected)) {
       return { kind: "local" };
     }
     const device = key ? hub.deviceForKey(key) : null;
@@ -233,6 +242,18 @@ export function createApi(hub, options) {
     ],
     [
       "POST",
+      /^\/v1\/lan$/,
+      async (req, _m, _url, auth) => {
+        localOnly(auth); // the Phones sheet on this PC
+        const { enabled } = await readJson(req);
+        hub.setLan(Boolean(enabled));
+        // The address opens or closes with the hub: start again on the new setting.
+        setTimeout(() => hub.emit("restart"), 50);
+        return { ok: true, enabled: Boolean(enabled) };
+      },
+    ],
+    [
+      "POST",
       /^\/v1\/restart$/,
       (_req, _m, _url, auth) => {
         localOnly(auth); // `crew setup` after an update
@@ -249,6 +270,15 @@ export function createApi(hub, options) {
       },
     ],
     ["GET", /^\/v1\/face$/, () => hub.faceStatus()],
+    [
+      "POST",
+      /^\/v1\/devices\/me\/webpush$/,
+      async (req, _m, _url, auth) => {
+        if (auth.kind !== "device") throw new HubError(400, "only a paired phone subscribes");
+        hub.setWebPush(auth.device.id, (await readJson(req)).subscription);
+        return { ok: true };
+      },
+    ],
     [
       "POST",
       /^\/v1\/jobs\/(\d+)\/tweaks\/take$/,
@@ -343,6 +373,9 @@ export function createApi(hub, options) {
         return {
           ...hub.startPairing(),
           hubUrl: remoteHost ? `https://${remoteHost}` : null,
+          // The phone browser app: the same address, and the home Wi-Fi one when it's on.
+          lanUrls: hub.lanUrls ?? [],
+          lan: Boolean(hub.config.lan?.enabled),
         };
       },
     ],
@@ -423,6 +456,13 @@ export function createApi(hub, options) {
           type: font[2] === "css" ? "text/css; charset=utf-8" : "font/woff2",
           cache: "public, max-age=604800",
         });
+      }
+      if (options.lan && url.pathname.startsWith("/v1/window/")) {
+        throw new HubError(403, "only the PC can do that");
+      }
+      // The phone browser app subscribes to notifications with this public key.
+      if (req.method === "GET" && url.pathname === "/v1/webpush/key") {
+        return send(res, 200, { publicKey: hub.webPushKey });
       }
       if (req.method === "POST" && url.pathname === "/v1/window/redeem") {
         const { code } = await readJson(req);

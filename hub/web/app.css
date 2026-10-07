@@ -2001,3 +2001,107 @@ button.send:hover {
     opacity: 0 !important;
   }
 }
+
+/* ---- the phone browser app: pairing, notifications, one column on a narrow screen ---- */
+
+.pair-phone {
+  display: grid;
+  gap: 10px;
+  max-width: 340px;
+  margin-top: 28px;
+  text-align: left;
+}
+
+.pair-phone input {
+  font: 600 1.4rem var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.notify-bar {
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notify-bar[hidden] {
+  display: none;
+}
+
+.lan-switch {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+button.back {
+  display: none;
+}
+
+/* Things only the PC itself can do. */
+body.phone #terminal,
+body.phone #phones-open,
+body.phone #face-toggle {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .app {
+    display: block;
+    height: 100dvh;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: 100dvh;
+    border-right: 0;
+  }
+
+  .chat {
+    display: none;
+    height: 100dvh;
+  }
+
+  body.chat-open .sidebar {
+    display: none;
+  }
+
+  body.chat-open .chat {
+    display: flex;
+  }
+
+  button.back {
+    display: inline-flex;
+  }
+
+  .thread-head {
+    padding: 8px 10px;
+    flex-wrap: wrap;
+  }
+
+  .thread-head .ghost {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+  }
+
+  .sheet {
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 92dvh;
+    margin: auto 0 0;
+    border-radius: 18px 18px 0 0;
+  }
+}

@@ -469,6 +469,8 @@ function renderApprovals(agent) {
 
 async function select(agent) {
   state.selected = agent;
+  // On a narrow screen the chat takes the whole screen; Back returns to the team.
+  document.body.classList.add("chat-open");
   localStorage.setItem("crew-agent", agent);
   renderTeam();
   renderThread();
@@ -898,6 +900,8 @@ async function askForAgent(event) {
 
 async function openPhones() {
   $("pairing").hidden = true;
+  const budget = await api("/v1/budget").catch(() => ({}));
+  $("lan-toggle").checked = Boolean(budget.lan);
   $("phones").showModal();
   await renderPhones();
 }
@@ -940,7 +944,11 @@ async function renderPhones() {
 }
 
 async function startPairing() {
-  const { code, expiresAt, hubUrl } = await api("/v1/pair/start", { method: "POST" });
+  const { code, expiresAt, hubUrl, lanUrls } = await api("/v1/pair/start", { method: "POST" });
+  const web = [hubUrl, ...(lanUrls ?? [])].filter(Boolean);
+  $("pair-web").textContent = web.length
+    ? `No app? Open ${web.join(" or ")} in the phone's browser and type the same code.`
+    : "";
   $("pair-hub").textContent = hubUrl ?? "Tailscale isn't running on this PC";
   $("pair-code").textContent = `${code.slice(0, 4)} ${code.slice(4)}`;
   $("pair-expiry").textContent =
@@ -1256,17 +1264,117 @@ async function toggleFace() {
 
 // ---- start
 
+// ---- the phone browser app
+
+/** A phone browser pairs with the code from the Phones sheet and keeps its own key. */
+function setupPairing() {
+  $("pair-phone").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = $("pair-phone-code").value.replace(/\s+/g, "").toUpperCase();
+    if (!code) return;
+    $("pair-phone-note").textContent = "Pairing…";
+    try {
+      const res = await fetch("/v1/pair/claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, name: "Phone browser" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.token) throw new Error(body.error ?? `HTTP ${res.status}`);
+      localStorage.setItem("crew-token", body.token);
+      location.replace("/");
+    } catch (err) {
+      $("pair-phone-note").textContent = `Not paired: ${err.message}`;
+    }
+  });
+}
+
+const b64ToBytes = (b64) => {
+  const raw = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+};
+
+/** Notifications need the app's service worker, HTTPS (Tailscale), and the user's yes. */
+async function setupNotifications() {
+  if (!("serviceWorker" in navigator) || !window.isSecureContext || !("PushManager" in window)) {
+    return;
+  }
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.k === "open" && e.data.agent) select(e.data.agent).catch(() => {});
+  });
+  const existing = await reg.pushManager.getSubscription();
+  if (existing && Notification.permission === "granted") {
+    await api("/v1/devices/me/webpush", {
+      method: "POST",
+      body: JSON.stringify({ subscription: existing.toJSON() }),
+    }).catch(() => {});
+    return;
+  }
+  if (Notification.permission === "denied") return;
+  const bar = $("notify-bar");
+  bar.hidden = false;
+  bar.onclick = async () => {
+    bar.disabled = true;
+    try {
+      if ((await Notification.requestPermission()) !== "granted") {
+        bar.textContent = "Notifications are off for Crew in this browser's settings.";
+        return;
+      }
+      const { publicKey } = await api("/v1/webpush/key");
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: b64ToBytes(publicKey),
+      });
+      await api("/v1/devices/me/webpush", {
+        method: "POST",
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+      bar.hidden = true;
+    } catch (err) {
+      bar.textContent = `Couldn't turn on notifications: ${err.message}`;
+    } finally {
+      bar.disabled = false;
+    }
+  };
+}
+
 async function start() {
+  setupPairing();
+  const asked = new URLSearchParams(location.search).get("agent");
+  if (asked) localStorage.setItem("crew-agent", asked);
   state.token = await takeToken();
   if (!state.token) {
     showLocked();
     return;
   }
+  // A paired phone's browser: no PC-only buttons, one column, and its own notifications.
+  const me = await api("/v1/devices/me").catch(() => null);
+  if (me?.device) {
+    state.phone = true;
+    document.body.classList.add("phone");
+    setupNotifications().catch(() => {});
+  }
+  $("back").addEventListener("click", () => document.body.classList.remove("chat-open"));
   $("composer").addEventListener("submit", send);
   $("fresh").addEventListener("click", () => freshStart().catch(() => {}));
   $("terminal").addEventListener("click", () => openTerminal().catch(() => {}));
   $("sync-memory").addEventListener("click", () => syncMemory().catch(() => {}));
   $("phones-open").addEventListener("click", () => openPhones().catch(() => {}));
+  $("lan-toggle").addEventListener("change", async (e) => {
+    const enabled = e.target.checked;
+    try {
+      await api("/v1/lan", { method: "POST", body: JSON.stringify({ enabled }) });
+      alertLine(
+        enabled
+          ? "Same Wi-Fi is on: Crew restarts in a moment. Pair the phone, then open the address shown."
+          : "Same Wi-Fi is off: Crew restarts in a moment.",
+      );
+    } catch (err) {
+      e.target.checked = !enabled;
+      alertLine(`Couldn't change it: ${err.message}`);
+    }
+  });
   $("new-agent-open").addEventListener("click", openNewAgent);
   $("new-agent-form").addEventListener("submit", (e) => askForAgent(e).catch(() => {}));
   $("new-agent-close").addEventListener("click", () => $("new-agent").close());
@@ -1344,6 +1452,7 @@ async function start() {
 
   const remembered = localStorage.getItem("crew-agent");
   if (remembered) state.selected = remembered;
+  if (remembered && (!state.phone || asked)) document.body.classList.add("chat-open");
   listen();
   if (state.selected) loadThread(state.selected);
 }

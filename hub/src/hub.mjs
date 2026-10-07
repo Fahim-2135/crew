@@ -41,6 +41,7 @@ import {
   planCheck,
 } from "./core/checks.mjs";
 import { cleanSteps, tweaksNote } from "./core/tweaks.mjs";
+import { WEBPUSH_PREFIX } from "./io/webpush.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -104,6 +105,9 @@ export class Hub extends EventEmitter {
     /** Folders a run may work in besides the brain: every drive, by default (start.mjs). */
     this.workDirs = deps.workDirs ?? [];
     this.pushFn = deps.push ?? null;
+    // Notifications for the phone browser app (io/webpush.mjs).
+    this.webPushFn = deps.webPush ?? null;
+    this.webPushKey = deps.webPushKey ?? null;
     this.createAgentFn = deps.createAgent ?? null;
     this.updateAgentFn = deps.updateAgent ?? null;
     this.openTerminalFn = deps.openTerminal ?? null;
@@ -935,6 +939,7 @@ export class Hub extends EventEmitter {
       running: [...this.running.keys()],
       queued: this.store.queuedJobs().length,
       autonomousToday: this.autonomousToday(),
+      lan: Boolean(this.config.lan?.enabled),
     };
   }
 
@@ -2014,6 +2019,31 @@ export class Hub extends EventEmitter {
     return device ?? null;
   }
 
+  /** Switch the home-Wi-Fi address for the phone browser app on or off (config.json lan). */
+  setLan(enabled) {
+    const file = join(this.paths.home, "config.json");
+    let saved = {};
+    try {
+      saved = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      /* no config yet */
+    }
+    saved.lan = { port: 7789, ...(saved.lan ?? {}), enabled };
+    writeFileSync(file, JSON.stringify(saved, null, 2));
+    this.config.lan = saved.lan;
+    this.event("lan", { enabled });
+  }
+
+  /** The phone browser app's Web Push subscription, kept as the device's push token. */
+  setWebPush(deviceId, subscription) {
+    const endpoint = String(subscription?.endpoint ?? "");
+    if (!/^https:\/\//.test(endpoint) || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      throw new HubError(400, "bad subscription");
+    }
+    const value = WEBPUSH_PREFIX + JSON.stringify({ endpoint, keys: subscription.keys });
+    this.setPushToken(deviceId, value);
+  }
+
   setPushToken(deviceId, pushToken) {
     const value = String(pushToken ?? "").trim();
     if (!value || value.length > 4096) throw new HubError(400, "bad push token");
@@ -2040,7 +2070,7 @@ export class Hub extends EventEmitter {
 
   /** Send the event to every paired phone, if it is one that should reach the phone. */
   pushOut(event) {
-    if (!this.pushFn) return;
+    if (!this.pushFn && !this.webPushFn) return;
     const job = event.data?.jobId ? this.store.job(event.data.jobId) : null;
     const callBack = job ? Boolean(this.store.get(`callback:${job.id}`, false)) : false;
     const quiet = Boolean(blockedBy(this.now(), this.offset(), this.config.quiet));
@@ -2049,7 +2079,11 @@ export class Hub extends EventEmitter {
     if (!message) return;
     for (const d of this.store.devices()) {
       if (d.revokedAt || !d.pushToken) continue;
-      this.pushFn(d.pushToken, message).then((r) => {
+      // The phone browser app subscribes with Web Push; the Android app with Firebase.
+      const web = d.pushToken.startsWith(WEBPUSH_PREFIX);
+      const sendFn = web ? this.webPushFn : this.pushFn;
+      if (!sendFn) continue;
+      sendFn(web ? d.pushToken.slice(WEBPUSH_PREFIX.length) : d.pushToken, message).then((r) => {
         if (r.ok) return;
         this.store.set("push:lastError", { at: this.now(), error: r.error ?? "unknown" });
         if (r.unregistered) this.store.updateDevice(d.id, { pushToken: null });
