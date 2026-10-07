@@ -40,6 +40,7 @@ import {
   nextRun,
   planCheck,
 } from "./core/checks.mjs";
+import { cleanSteps, tweaksNote } from "./core/tweaks.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
 import { owner, Owner, setOwner } from "./core/owner.mjs";
@@ -797,6 +798,9 @@ export class Hub extends EventEmitter {
         queued: queued.filter((j) => j.agent === id).length,
         lastLine: lastAgent ? oneLine(lastAgent.text, 120) : null,
         lastAt: lastAgent?.at ?? null,
+        progress:
+          latest?.status === "running" ? this.store.get(`progress:${latest.id}`, null) : null,
+        jobId: latest?.status === "running" ? latest.id : null,
       };
     });
   }
@@ -991,6 +995,71 @@ export class Hub extends EventEmitter {
       attachments: files.map(publicAttachment),
     });
     return job;
+  }
+
+  // --- mid-task notes and the checklist (core/tweaks.mjs)
+
+  /** The agent's run in progress that can take a note (its chats, inbox work, schedules…). */
+  runningJob(agent) {
+    for (const [id, run] of this.running) {
+      if (run.agent === agent && run.kind !== "system" && run.kind !== "call") {
+        return this.store.job(id);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * "Tell it now": a note for the agent's run in progress, read after its current step. With no
+   * run in progress it is an ordinary message.
+   */
+  tweak(agent, text, options = {}) {
+    this.assertAgent(agent);
+    const words = String(text ?? "").trim();
+    if (!words) throw new HubError(400, "empty message");
+    const job = this.runningJob(agent);
+    if (!job) return { job: this.send(agent, words, options), now: false };
+    const key = `tweaks:${job.id}`;
+    this.store.set(key, [...this.store.get(key, []), words].slice(-10));
+    this.store.addMessage({ agent, jobId: job.id, role: "you", text: words, at: this.now() });
+    this.event("tweak.sent", { agent, jobId: job.id });
+    return { job, now: true };
+  }
+
+  /** The tweak hook takes the notes waiting for a run; the chat says the agent has them. */
+  takeTweaks(jobId) {
+    const job = this.store.job(Number(jobId));
+    if (!job) throw new HubError(404, "no such job");
+    const key = `tweaks:${job.id}`;
+    const texts = this.store.get(key, []);
+    if (!texts.length) return { texts: [] };
+    this.store.set(key, []);
+    this.store.addMessage({
+      agent: job.agent,
+      jobId: job.id,
+      role: "note",
+      text: `${this.titleOf(job.agent)} got your note mid-task.`,
+      at: this.now(),
+    });
+    this.event("tweak.taken", { agent: job.agent, jobId: job.id });
+    return { texts };
+  }
+
+  /** The agent's checklist for its run in progress (set_progress). */
+  setProgress(jobId, steps) {
+    const job = this.store.job(Number(jobId));
+    if (!job || job.status !== "running") {
+      throw new HubError(403, "only a run in progress has a checklist");
+    }
+    let clean;
+    try {
+      clean = cleanSteps(steps);
+    } catch (err) {
+      throw new HubError(400, err.message);
+    }
+    this.store.set(`progress:${job.id}`, clean);
+    this.event("job.progress", { agent: job.agent, jobId: job.id, steps: clean });
+    return { steps: clean };
   }
 
   /** Queue any job. */
@@ -1540,7 +1609,13 @@ export class Hub extends EventEmitter {
     }
     writeFileSync(
       settingsPath,
-      JSON.stringify(runSettings({ gateHook: this.paths.gateHook, nodeBin: this.nodeBin })),
+      JSON.stringify(
+        runSettings({
+          gateHook: this.paths.gateHook,
+          tweakHook: this.paths.tweakHook,
+          nodeBin: this.nodeBin,
+        }),
+      ),
     );
 
     const briefPath = join(this.paths.brain, "BRIEF.md");
@@ -1564,6 +1639,7 @@ export class Hub extends EventEmitter {
           entries: this.skills(),
         }),
         checks: checksNote(),
+        tweaks: tweaksNote(Owner()),
       }),
       ...(approvals ? { mcpConfigPath: mcpPath } : {}),
       partial: job.kind === "call",

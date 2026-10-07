@@ -33,6 +33,7 @@ export function crewPaths(env = process.env) {
     // The `crew` command itself, so other tools (claude-face) can open the window on an agent.
     cli: fileURLToPath(new URL("../../bin/crew.mjs", import.meta.url)).replace(/\\/g, "/"),
     gateHook: fileURLToPath(new URL("./gate-hook.mjs", import.meta.url)).replace(/\\/g, "/"),
+    tweakHook: fileURLToPath(new URL("./tweak-hook.mjs", import.meta.url)).replace(/\\/g, "/"),
     port: Number(env.CREW_PORT || 7788),
     // Files the user attaches to messages: outside Crew's own state, so agents and links can open them.
     attachments: env.CREW_ATTACHMENTS || join(homedir(), "Documents", "Crew", "attachments"),

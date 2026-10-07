@@ -171,6 +171,10 @@ export function createApi(hub, options) {
       /^\/v1\/threads\/([a-z][a-z0-9]*)\/messages$/,
       async (req, m, _url, auth) => {
         const body = await readJson(req);
+        // "Tell it now": a note for the run in progress (an ordinary message when there is none).
+        if (body.now === true) {
+          return hub.tweak(m[1], body.text, { origin: auth.kind === "device" ? "phone" : "pc" });
+        }
         return {
           job: hub.send(m[1], body.text, {
             origin: auth.kind === "device" ? "phone" : "pc",
@@ -245,6 +249,22 @@ export function createApi(hub, options) {
       },
     ],
     ["GET", /^\/v1\/face$/, () => hub.faceStatus()],
+    [
+      "POST",
+      /^\/v1\/jobs\/(\d+)\/tweaks\/take$/,
+      (_req, m, _url, auth) => {
+        localOnly(auth); // the tweak hook of a run on this PC
+        return hub.takeTweaks(m[1]);
+      },
+    ],
+    [
+      "POST",
+      /^\/v1\/jobs\/(\d+)\/progress$/,
+      async (req, m, _url, auth) => {
+        localOnly(auth); // an agent's run on this PC (set_progress)
+        return hub.setProgress(m[1], (await readJson(req)).steps);
+      },
+    ],
     [
       "POST",
       /^\/v1\/checks$/,

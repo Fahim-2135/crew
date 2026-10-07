@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The `crew` MCP server Claude Code starts for every Crew run: it gives the agent its Crew tools
-// (`request_approval`, `ask_teammate`, and `schedule_check` / `list_checks` / `cancel_check`)
+// (`request_approval`, `ask_teammate`, `schedule_check` / `list_checks` / `cancel_check`,
+// and `set_progress`)
 // and forwards each call to the hub. Zero dependencies: newline-delimited
 // JSON-RPC 2.0 on stdin/stdout (verified against Claude Code 2.1.288 in spike 0.6).
 //
@@ -91,6 +92,39 @@ const CHECK_TOOLS = [
     },
   },
 ];
+
+const PROGRESS_TOOL = {
+  name: "set_progress",
+  description:
+    "Show your plan for a bigger task as a short checklist, and keep it current: call it at the start, and whenever a step starts or finishes. The user sees it live on the PC and the phone, so they can see how far you are without interrupting you. Send the whole list each time.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      steps: {
+        type: "array",
+        description: "Up to 12 steps, in order",
+        items: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "A few words" },
+            status: { type: "string", enum: ["todo", "doing", "done"] },
+          },
+          required: ["text", "status"],
+        },
+      },
+    },
+    required: ["steps"],
+  },
+};
+
+async function setProgress(args) {
+  const { ok, status, body } = await hub("POST", `/v1/jobs/${process.env.CREW_JOB}/progress`, {
+    steps: args.steps,
+  });
+  if (!ok) return text(`Not shown: ${body.error ?? `HTTP ${status}`}.`, true);
+  const done = body.steps.filter((s) => s.status === "done").length;
+  return text(`Checklist shown: ${done} of ${body.steps.length} done.`);
+}
 
 const when = (ms) =>
   new Date(ms).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
@@ -211,7 +245,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
   } else if (req.method === "tools/list") {
     send({
       id: req.id,
-      result: { tools: [TOOL, askTool(await teammates()), ...CHECK_TOOLS] },
+      result: { tools: [TOOL, askTool(await teammates()), ...CHECK_TOOLS, PROGRESS_TOOL] },
     });
   } else if (req.method === "tools/call") {
     let result;
@@ -224,7 +258,9 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
             ? await askTeammate(args)
             : CHECK_TOOLS.some((t) => t.name === req.params?.name)
               ? await checkTool(req.params.name, args)
-              : text(`unknown tool ${req.params?.name}`, true);
+              : req.params?.name === PROGRESS_TOOL.name
+                ? await setProgress(args)
+                : text(`unknown tool ${req.params?.name}`, true);
     } catch (err) {
       result = text(`Crew could not be reached: ${err?.message ?? err}`, true);
     }

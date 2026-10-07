@@ -20,11 +20,27 @@ export const DEFAULT_MODEL = "sonnet";
 /**
  * The `--settings` file for every run: Crew's gate before each tool call. It is added on top
  * of the user's own settings, not instead of them.
- * @param {{ gateHook: string, nodeBin?: string }} paths
+ * @param {{ gateHook: string, tweakHook?: string, nodeBin?: string }} paths
  */
 export function runSettings(paths) {
+  // Notes the user sends mid-task reach the agent after each step, or keep it going at the end.
+  const tweak = paths.tweakHook
+    ? [
+        {
+          matcher: "*",
+          hooks: [
+            {
+              type: "command",
+              command: `"${paths.nodeBin ?? "node"}" "${paths.tweakHook}"`,
+              timeout: 10,
+            },
+          ],
+        },
+      ]
+    : null;
   return {
     hooks: {
+      ...(tweak ? { PostToolUse: tweak, Stop: tweak } : {}),
       PreToolUse: [
         {
           matcher: "*",
@@ -72,6 +88,7 @@ export function crewNote(context) {
   }
   if (context.skills) lines.push("", context.skills);
   if (context.checks) lines.push("", context.checks);
+  if (context.tweaks) lines.push("", context.tweaks);
   if (context.brief) lines.push("", `# ${owners()} brief`, context.brief.trim());
   return lines.join("\n");
 }

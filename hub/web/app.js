@@ -258,12 +258,23 @@ function renderThread() {
   const msgs = state.messages[agent] ?? [];
   const last = msgs.at(-1);
   // Rebuild only when something changed: a rebuild restarts the faces' motion.
-  const key = JSON.stringify([agent, msgs.length, last?.id, last?.text, me.state === "working"]);
+  const working = me.state === "working";
+  $("send-now").hidden = !working;
+  $("input").placeholder = working
+    ? `Message… waits until ${titleOf(agent)} finishes (Alt+Enter: tell it now)`
+    : "Message…";
+  const key = JSON.stringify([agent, msgs.length, last?.id, last?.text, working, me.progress]);
   if (list.dataset.key !== key) {
     list.dataset.key = key;
     const items = msgs.map((m) => messageItem(agent, m));
     if (me.state === "working") {
-      items.push(messageItem(agent, { role: "typing", text: `${titleOf(agent)} is working…` }));
+      items.push(
+        messageItem(agent, {
+          role: "typing",
+          text: `${titleOf(agent)} is working…`,
+          steps: me.progress,
+        }),
+      );
     }
     list.replaceChildren(...items);
     if (atBottom) list.scrollTop = list.scrollHeight;
@@ -287,6 +298,17 @@ function messageItem(agent, m) {
   body.className = "body";
   if (m.text) body.append(...formatText(m.text));
   if (m.attachments?.length) body.append(attachmentList(m.attachments));
+  if (m.steps?.length) {
+    const list = document.createElement("ul");
+    list.className = "checklist";
+    for (const step of m.steps) {
+      const item = document.createElement("li");
+      item.className = step.status;
+      item.textContent = step.text;
+      list.append(item);
+    }
+    body.append(list);
+  }
   li.append(who, body);
   if (m.role === "agent" && m.id) li.append(feedbackButtons(agent, m.id));
   return li;
@@ -484,6 +506,32 @@ async function refresh() {
   $("phones-open").hidden = !budget.phones;
   renderTeam();
   renderThread();
+}
+
+/** "Tell it now": the note reaches the agent after the step it's on. */
+async function sendNow() {
+  const input = $("input");
+  const text = input.value.trim();
+  const agent = state.selected;
+  if (!text || !agent || state.sending) return;
+  state.sending = true;
+  $("send-now").disabled = true;
+  try {
+    const answer = await api(`/v1/threads/${agent}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text, now: true }),
+    });
+    input.value = "";
+    autosize();
+    state.messages[agent] = [...(state.messages[agent] ?? []), { role: "you", text }];
+    renderThread();
+    if (!answer.now) alertLine(`${titleOf(agent)} had already finished, so it's a new message.`);
+  } catch (err) {
+    alertLine(`Not sent: ${err.message}`);
+  } finally {
+    state.sending = false;
+    $("send-now").disabled = false;
+  }
 }
 
 async function send(event) {
@@ -1274,7 +1322,13 @@ async function start() {
     $("composer").classList.remove("dropping");
     addFiles([...(e.dataTransfer?.files ?? [])]);
   });
+  $("send-now").addEventListener("click", () => sendNow().catch(() => {}));
   $("input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.altKey) {
+      e.preventDefault();
+      sendNow().catch(() => {});
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       $("composer").requestSubmit();

@@ -536,6 +536,64 @@ button.sync[hidden] {
   display: none;
 }
 
+/* ---- while an agent works: "Tell it now" and its checklist ---- */
+
+button.now {
+  align-self: flex-end;
+  white-space: nowrap;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.now[hidden] {
+  display: none;
+}
+
+.checklist {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.checklist li::before {
+  display: inline-block;
+  width: 1.4em;
+  content: "○";
+  color: var(--faint);
+}
+
+.checklist li.doing {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.checklist li.doing::before {
+  content: "●";
+  color: var(--accent);
+}
+
+.checklist li.done {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.checklist li.done::before {
+  content: "✓";
+  color: var(--good);
+  text-decoration: none;
+}
+
 /* ---- skills: what an agent has learned, and how its week went ---- */
 
 .score {
