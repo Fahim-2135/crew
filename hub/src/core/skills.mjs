@@ -24,7 +24,8 @@ export function needsReview(job, toolCount) {
 
 /** A review reply that saved nothing: Crew leaves the chat alone. */
 export function savedNothing(reply) {
-  return /^\W*nothing to save\W*$/i.test(String(reply).trim());
+  // "nothing to save", alone or with a short reason after it.
+  return /^\W*nothing to save\b/i.test(String(reply).trim());
 }
 
 /**

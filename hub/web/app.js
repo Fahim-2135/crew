@@ -86,6 +86,9 @@ async function api(path, init = {}) {
 }
 
 function showLocked() {
+  // The PC's own window gets a new key from the Crew icon; a phone pairs with a code.
+  const pc = ["127.0.0.1", "localhost"].includes(location.hostname);
+  $("locked-pc").hidden = !pc;
   $("locked").hidden = false;
 }
 

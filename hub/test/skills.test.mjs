@@ -205,6 +205,7 @@ test("a review that saved nothing leaves the chat alone", () => {
   assert.equal(savedNothing("Nothing to save."), true);
   assert.equal(savedNothing("  nothing to save  "), true);
   assert.equal(savedNothing('Saved demo-video v4 (was: "nothing to save" before)'), false);
+  assert.equal(savedNothing("Nothing to save: it was a one-off test."), true);
 });
 
 test("the score compares this week with the week before", () => {
