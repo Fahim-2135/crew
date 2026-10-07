@@ -179,3 +179,31 @@ test("the hook hands a note over after a step, keeps the agent going at the end,
     end.close();
   }
 });
+
+test("a skill review after a task runs quietly and takes no notes", () => {
+  const { store, hub, done } = setup();
+  try {
+    const task = store.addJob({
+      agent: "social",
+      kind: "chat",
+      priority: 0,
+      prompt: "x",
+      createdAt: 1,
+    });
+    store.updateJob(task.id, { status: "done", endedAt: Date.now() });
+    const review = store.addJob({
+      agent: "social",
+      kind: "review",
+      priority: 2,
+      prompt: "r",
+      createdAt: 2,
+    });
+    store.updateJob(review.id, { status: "running" });
+    hub.running.set(review.id, { agent: "social", kind: "review", kill: () => {} });
+    assert.equal(hub.agents().find((a) => a.id === "social").state, "done");
+    const answer = hub.tweak("social", "the one before it");
+    assert.equal(answer.now, false, "a new message, not a note to the review");
+  } finally {
+    done();
+  }
+});

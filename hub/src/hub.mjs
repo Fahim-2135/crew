@@ -778,7 +778,8 @@ export class Hub extends EventEmitter {
     const limit = this.limit();
     const pending = this.store.approvals("pending");
     return this.team().map((id) => {
-      const latest = this.store.latestJob(id);
+      // A skill review or look-back after a task runs quietly: the agent shows what it did last.
+      const latest = this.store.latestVisibleJob(id);
       const lastAgent = this.store
         .messages(id, 20)
         .filter((m) => m.role === "agent")
@@ -1007,7 +1008,8 @@ export class Hub extends EventEmitter {
   /** The agent's run in progress that can take a note (its chats, inbox work, schedules…). */
   runningJob(agent) {
     for (const [id, run] of this.running) {
-      if (run.agent === agent && run.kind !== "system" && run.kind !== "call") {
+      // Real work only: a call is spoken, and reviews, look-backs and checks are Crew's own.
+      if (run.agent === agent && ["chat", "inbox", "schedule", "reply", "ask"].includes(run.kind)) {
         return this.store.job(id);
       }
     }

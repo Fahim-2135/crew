@@ -243,6 +243,17 @@ export class Store {
       .map(camel);
   }
 
+  /** The agent's latest job, leaving out the quiet bookkeeping runs (skill reviews, look-backs). */
+  latestVisibleJob(agent) {
+    return camel(
+      this.db
+        .prepare(
+          "SELECT * FROM jobs WHERE agent = ? AND kind NOT IN ('review', 'retro') ORDER BY id DESC",
+        )
+        .get(agent),
+    );
+  }
+
   latestJob(agent) {
     return camel(this.db.prepare("SELECT * FROM jobs WHERE agent = ? ORDER BY id DESC").get(agent));
   }
