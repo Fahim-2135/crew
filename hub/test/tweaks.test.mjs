@@ -219,3 +219,17 @@ test("a note that arrives after the task ended says so in the chat", () => {
     done();
   }
 });
+
+test("a running task still shows as working while more messages wait behind it", () => {
+  const { store, hub, working, done } = setup();
+  try {
+    working("social");
+    hub.send("social", "by the way, are you recording in the real terminal?");
+    const social = hub.agents().find((a) => a.id === "social");
+    assert.equal(social.state, "working");
+    assert.equal(social.queued, 1);
+    assert.equal(store.queuedJobs().length, 1);
+  } finally {
+    done();
+  }
+});

@@ -243,12 +243,13 @@ export class Store {
       .map(camel);
   }
 
-  /** The agent's latest job, leaving out the quiet bookkeeping runs (skill reviews, look-backs). */
+  /** The agent's latest started job, leaving out the quiet bookkeeping runs (skill reviews, look-backs);
+   *  a message queued behind a running task doesn't hide it. */
   latestVisibleJob(agent) {
     return camel(
       this.db
         .prepare(
-          "SELECT * FROM jobs WHERE agent = ? AND kind NOT IN ('review', 'retro') ORDER BY id DESC",
+          "SELECT * FROM jobs WHERE agent = ? AND kind NOT IN ('review', 'retro') AND status != 'queued' ORDER BY id DESC",
         )
         .get(agent),
     );
