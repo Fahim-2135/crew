@@ -103,7 +103,11 @@ if (prompt.includes("SLEEP")) {
     type: "result",
     subtype: failed ? "error_during_execution" : "success",
     is_error: failed,
-    result: limited ? "Claude AI usage limit reached" : failed ? "boom" : `echo: ${lastLine}`,
+    result: limited
+      ? "You've hit your session limit · resets 8:40pm (Asia/Dhaka)"
+      : failed
+        ? "boom"
+        : `echo: ${lastLine}`,
     session_id: sessionId,
     num_turns: 1,
     usage: { input_tokens: 10, output_tokens: 5 },

@@ -56,7 +56,8 @@ const DONE_FOR_MS = 15 * 60_000;
 
 /** Text Claude Code prints when it cannot resume a session it does not know. */
 const LOST_SESSION = /no conversation found|session.*not found/i;
-const LIMIT_TEXT = /usage limit|rate limit|429|limit reached/i;
+const LIMIT_TEXT =
+  /usage limit|rate limit|session limit|weekly limit|hit your .{0,20}limit|429|limit reached/i;
 /** Text Claude Code prints when asked to create a session id that already exists. */
 const SESSION_IN_USE = /session id .* is already in use/i;
 
