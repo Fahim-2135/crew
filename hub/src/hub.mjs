@@ -41,6 +41,7 @@ import {
   planCheck,
 } from "./core/checks.mjs";
 import { cleanSteps, tweaksNote } from "./core/tweaks.mjs";
+import { RESUMABLE_KINDS, resumeAt, resumePrompt } from "./core/resume.mjs";
 import { WEBPUSH_PREFIX } from "./io/webpush.mjs";
 import { ICON_NAMES, iconFor } from "../../shared/faces.mjs";
 import { createSplitter, voiceNote } from "./core/speech.mjs";
@@ -444,6 +445,41 @@ export class Hub extends EventEmitter {
       if (!pending) review = this.learn(agent);
     }
     return { ok: true, review: review ? review.id : null };
+  }
+
+  // --- carrying on after the plan's usage limit (core/resume.mjs)
+
+  /**
+   * A task the usage limit cut off is queued again for 5 minutes after the limit resets, in the
+   * same conversation, so the agent carries on where it stopped.
+   */
+  resumeAfterLimit(job) {
+    if (!RESUMABLE_KINDS.has(job.kind)) return null;
+    const tries = Number(this.store.get(`resumes:${job.id}`, 0));
+    if (tries >= 3) return null; // the limit keeps hitting: leave it to the user
+    const at = resumeAt(this.limit(), this.now());
+    const again = this.enqueue({
+      agent: job.agent,
+      kind: job.kind === "call" ? "chat" : job.kind,
+      // Above schedules: after a reset the last usage reading is stale, which holds back work
+      // below "approved".
+      priority: Math.min(job.priority, PRIORITY.approved),
+      prompt: resumePrompt(job.prompt),
+      tainted: Boolean(job.tainted),
+      origin: job.origin ?? "pc",
+      notBefore: at,
+    });
+    this.store.set(`resumes:${again.id}`, tries + 1);
+    const when = new Date(at + this.offset() * 60_000).toISOString().slice(11, 16);
+    this.store.addMessage({
+      agent: job.agent,
+      jobId: again.id,
+      role: "note",
+      text: `Hit the usage limit. ${this.titleOf(job.agent)} picks this up again at ${when}, 5 minutes after it resets.`,
+      at: this.now(),
+    });
+    this.event("job.resume_scheduled", { agent: job.agent, jobId: again.id, at });
+    return again;
   }
 
   // --- skills the agents write and improve themselves (core/skills.mjs)
@@ -1081,7 +1117,7 @@ export class Hub extends EventEmitter {
   }
 
   /** Queue any job. */
-  enqueue({ agent, kind, priority, prompt, tainted = false, origin = "pc" }) {
+  enqueue({ agent, kind, priority, prompt, tainted = false, origin = "pc", notBefore = null }) {
     const job = this.store.addJob({
       agent,
       kind,
@@ -1089,6 +1125,7 @@ export class Hub extends EventEmitter {
       prompt,
       tainted,
       origin,
+      notBefore,
       createdAt: this.now(),
     });
     this.event("job.queued", { jobId: job.id, agent, kind });
@@ -1506,6 +1543,11 @@ export class Hub extends EventEmitter {
 
     for (const job of this.store.queuedJobs()) {
       if (busy.has(job.agent)) continue;
+      // Picked up again after the usage limit resets: not before its time.
+      if (job.notBefore && job.notBefore > now) {
+        deferred = true;
+        continue;
+      }
       // A call, and a teammate's answer someone is waiting on, may take one slot past the limit.
       const spare = job.kind === "call" || job.kind === "ask";
       if (this.running.size >= (spare ? max + 1 : max)) continue;
@@ -1788,8 +1830,10 @@ export class Hub extends EventEmitter {
         return;
       }
       if (LOST_SESSION.test(detail)) this.store.retireThread(thread.id, "lost");
-      if (LIMIT_TEXT.test(detail)) this.store.set("limitHitAt", this.now());
+      const limited = LIMIT_TEXT.test(detail);
+      if (limited) this.store.set("limitHitAt", this.now());
       this.finish(job, "failed", { error: oneLine(detail, 300) });
+      if (limited) this.resumeAfterLimit(job);
     }
     this.tick();
   }

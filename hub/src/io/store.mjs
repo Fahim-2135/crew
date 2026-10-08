@@ -141,6 +141,11 @@ export class Store {
       // Files attached to a message, as JSON: [{ id, name, type, size, path, kind }].
       this.db.exec("ALTER TABLE messages ADD COLUMN attachments TEXT");
     }
+    if (!jobColumns.includes("not_before")) {
+      // A job that must not start before this time (ms): a task picked up again after the
+      // plan's usage limit resets.
+      this.db.exec("ALTER TABLE jobs ADD COLUMN not_before INTEGER");
+    }
     if (!threadColumns.includes("started")) {
       // Set once Claude Code has created the thread's session, even if that first turn then
       // failed or was stopped: from then on the session must be resumed, not created again.
@@ -195,12 +200,21 @@ export class Store {
 
   // --- jobs
 
-  addJob({ agent, kind, priority, prompt, createdAt, tainted = false, origin = "pc" }) {
+  addJob({
+    agent,
+    kind,
+    priority,
+    prompt,
+    createdAt,
+    tainted = false,
+    origin = "pc",
+    notBefore = null,
+  }) {
     const { lastInsertRowid } = this.db
       .prepare(
-        "INSERT INTO jobs (agent, kind, priority, prompt, created_at, tainted, origin) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (agent, kind, priority, prompt, created_at, tainted, origin, not_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(agent, kind, priority, prompt, createdAt, tainted ? 1 : 0, origin);
+      .run(agent, kind, priority, prompt, createdAt, tainted ? 1 : 0, origin, notBefore);
     return this.job(Number(lastInsertRowid));
   }
 

@@ -6,6 +6,7 @@
 //   FAIL      ends with an error result
 //   BADTOOLS  reports Bash among its tools (the restriction did not hold)
 //   WRITE     reports a Write tool call before answering
+//   LIMITHIT  ends on the plan's usage limit (unless the prompt says the limit has reset)
 //   TOOLS5    reports five Read tool calls before answering (real work: a skill review follows)
 //   INUSE     refuses --session-id as "already in use" (only --resume works)
 
@@ -20,6 +21,8 @@ const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
+
+const hitLimit = prompt.includes("LIMITHIT") && !prompt.includes("has reset now");
 
 if (prompt.includes("INUSE") && flag("--session-id")) {
   process.stderr.write(`Error: Session ID ${sessionId} is already in use.
@@ -36,11 +39,17 @@ out({
 });
 out({
   type: "rate_limit_event",
-  rate_limit_info: {
-    status: "allowed",
-    resetsAt: 1791124200,
-    unifiedWindows: { five_hour: { utilization: 0.25 }, seven_day: { utilization: 0.3 } },
-  },
+  rate_limit_info: hitLimit
+    ? {
+        status: "rejected",
+        resetsAt: Math.floor(Date.now() / 1000) + 7200,
+        unifiedWindows: { five_hour: { utilization: 1 }, seven_day: { utilization: 0.3 } },
+      }
+    : {
+        status: "allowed",
+        resetsAt: 1791124200,
+        unifiedWindows: { five_hour: { utilization: 0.25 }, seven_day: { utilization: 0.3 } },
+      },
 });
 
 if (prompt.includes("SLEEP")) {
@@ -65,7 +74,8 @@ if (prompt.includes("SLEEP")) {
     });
   }
   const lastLine = prompt.trim().split("\n").pop();
-  const failed = prompt.includes("FAIL");
+  const limited = hitLimit;
+  const failed = prompt.includes("FAIL") || limited;
   if (args.includes("--include-partial-messages")) {
     // Stream the reply in small pieces, the way partial messages arrive.
     const reply = `echo: ${lastLine}`;
@@ -93,7 +103,7 @@ if (prompt.includes("SLEEP")) {
     type: "result",
     subtype: failed ? "error_during_execution" : "success",
     is_error: failed,
-    result: failed ? "boom" : `echo: ${lastLine}`,
+    result: limited ? "Claude AI usage limit reached" : failed ? "boom" : `echo: ${lastLine}`,
     session_id: sessionId,
     num_turns: 1,
     usage: { input_tokens: 10, output_tokens: 5 },
